@@ -1,0 +1,129 @@
+defaults_fit: &defaults_fit
+  # logging
+  base_dir: tb_logs
+  name: spin_reduce
+  version: default
+
+  # training
+  n_epochs: 10000
+  learning_rate: 0.001
+  batch_size: 64
+  val_interval: 100
+  ckpt_keep: 10
+  ckpt_interval: 1000
+
+  # data
+  n_series: 1
+  rand_init: False
+  sample:  # resample in time dim, reduce by a factor of 'step'
+    step: 1
+  chuck:  # chuck from entire trajectory
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+  dydt: null # how derivative for coll training is computed [diff_interpolate, diff_origin, mlp_output]
+  
+  # model
+  restore: null  # restore from ckpt
+  nODE: ScaleMLP  # init which model as neural ODE
+  phy_loss:
+    alpha: 0.1
+
+
+rober_fit:
+  <<: *defaults_fit
+  chem: rober
+  version: fit_rober1::5_chk10
+  sample:  # resample in time dim, reduce by a factor of 'step'
+    step: 5
+  chuck:
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+  n_epochs: 50000
+
+pollu_fit:
+  <<: *defaults_fit
+  chem: pollu
+  version: fit_pollu1::4_chk25
+  sample:  # resample in time dim, reduce by a factor of 'step'
+    step: 4
+  chuck:
+    chuck_len: 25
+    stride_len: 25
+    ratio: 1
+
+toy_fit:
+  <<: *defaults_fit
+  chem: toy
+  version: fit_toy1::10_chk10
+  sample:  # resample in time dim, reduce by a factor of 'step'
+    step: 10
+  chuck:
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+
+#################################
+
+defaults_coll: &defaults_coll
+  # logging
+  base_dir: tb_logs
+  name: spin_reduce
+  version: default
+
+  # training
+  n_epochs: 1000
+  learning_rate: 0.01
+  batch_size: 64
+  val_interval: 20
+  ckpt_keep: 10
+  ckpt_interval: 100
+
+  # data
+  n_series: 1
+  rand_init: False
+  sample:  # resample in time dim, reduce by a factor of 'step'
+    step: 2
+  chuck:  # chuck from entire trajectory
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+  dydt:  # how derivative for coll training is computed [diff_interpolate, diff_origin, mlp_output]
+    diff_interpolate:
+      ratio: 10
+  
+  # model
+  restore: null  # restore from ckpt
+  nODE: ScaleMLP  # init which model as neural ODE
+  phy_loss: null
+
+rober_coll:
+  <<: *defaults_coll
+  chem: rober
+  version: coll_rober1_chk50
+  chuck:
+    chuck_len: 50
+    stride_len: 50
+    ratio: 1
+  restore: tb_logs/
+
+pollu_coll:
+  <<: *defaults_coll
+  chem: pollu
+  version: coll_pollu1::10_chk10
+  chuck:
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+  restore: tb_logs/spin_reduce/20250502-035100_fit_pollu1::10_chk10
+
+toy_coll:
+  <<: *defaults_coll
+  chem: toy
+  version: coll_toy1::2_chk20-10_inter10
+  chuck:
+    chuck_len: 20
+    stride_len: 20
+    ratio: 1
+  restore: tb_logs/spin_reduce/20250502-010954_fit_toy1::2_chk20-10

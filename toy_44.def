@@ -1,0 +1,168 @@
+#LANGUAGE Fortran90
+#INTEGRATOR rosenbrock
+#DRIVER general
+
+#DEFVAR
+fragdummy = IGNORE ;
+OH = IGNORE ;
+HO2 = IGNORE ;
+NO = IGNORE ;
+NO2 = IGNORE ;
+T_RO2_O2 = IGNORE ;
+T_RO2_O4 = IGNORE ;
+T_RO2_O3 = IGNORE ;
+T_RO2_O5 = IGNORE ;
+T_O0_NO3 = IGNORE ;
+T_O2_NO3 = IGNORE ;
+T_O1_NO3 = IGNORE ;
+T_O3_NO3 = IGNORE ;
+T_RO_O1 = IGNORE ;
+T_RO_O3 = IGNORE ;
+T_RO_O2 = IGNORE ;
+T_RO_O4 = IGNORE ;
+Tuni_O1_O = IGNORE ;
+Tuni_O3_O = IGNORE ;
+Tuni_O2_O = IGNORE ;
+Tuni_O4_O = IGNORE ;
+T_O0_OOH = IGNORE ;
+T_O2_OOH = IGNORE ;
+T_O1_OOH = IGNORE ;
+T_O3_OOH = IGNORE ;
+// T_O-1_2OH = IGNORE ;
+T_O1_2OH = IGNORE ;
+T_O0_2OH = IGNORE ;
+T_O2_2OH = IGNORE ;
+T_O0_O = IGNORE ;
+T_O2_O = IGNORE ;
+T_O1_O = IGNORE ;
+T_O3_O = IGNORE ;
+TO1_TO1 = IGNORE ;
+TO1_TO3 = IGNORE ;
+TO1_TO2 = IGNORE ;
+TO1_TO4 = IGNORE ;
+TO3_TO3 = IGNORE ;
+TO3_TO2 = IGNORE ;
+TO3_TO4 = IGNORE ;
+TO2_TO2 = IGNORE ;
+TO2_TO4 = IGNORE ;
+TO4_TO4 = IGNORE ;
+TOY = IGNORE ;
+O3 = IGNORE ;
+
+
+#EQUATIONS
+ 
+ 
+// reactions that get species from MCM to PRAM:
+// TOY-VOC reacts with OH:
+{0.}	TOY + OH = T_RO2_O3	:	1.e-11 ;
+{1.}	TOY + O3 = T_RO2_O2 + OH	:	1.e-15 ;
+ 
+//Autoxidation: RO2 -> H-shift + O2 addition -> RO2 
+{2.}      T_RO2_O2 = T_RO2_O4 : 		1.0; 
+{3.}      T_RO2_O3 = T_RO2_O5 : 		1.0; 
+
+//Peroxy radicals reacting with NO to form RNO3: -> RO2 + NO -> R-NO3 
+{4.}      T_RO2_O2 + NO = T_O0_NO3 : 		KRO2NO*0.4 ; 
+{5.}      T_RO2_O4 + NO = T_O2_NO3 : 		KRO2NO*0.4 ; 
+{6.}      T_RO2_O3 + NO = T_O1_NO3 : 		KRO2NO*0.4 ; 
+{7.}      T_RO2_O5 + NO = T_O3_NO3 : 		KRO2NO*0.4 ; 
+
+//Peroxy radicals reacting with NO to form RO: -> RO2 + NO -> RO 
+{8.}      T_RO2_O2 + NO = T_RO_O1 + NO2 : 		KRO2NO*0.6 ; 
+{9.}      T_RO2_O4 + NO = T_RO_O3 + NO2 : 		KRO2NO*0.6 ; 
+{10.}      T_RO2_O3 + NO = T_RO_O2 + NO2 : 		KRO2NO*0.6 ; 
+{11.}      T_RO2_O5 + NO = T_RO_O4 + NO2 : 		KRO2NO*0.6 ; 
+
+//RO2 formation from RO: RO -> RO2 (#O -> #O+2 
+{12.}      T_RO_O4 = fragdummy : 		KDEC; 
+{13.}      T_RO_O2 = T_RO2_O4 : 		KDEC; 
+{14.}      T_RO_O1 = T_RO2_O3 : 		KDEC; 
+{15.}      T_RO_O3 = T_RO2_O5 : 		KDEC; 
+
+//RO2 radicals abstracting H from alpha hydroxyl carbon -> RC=O 
+{16.}      T_RO2_O2 = Tuni_O1_O : 		 1.0 ; 
+{17.}      T_RO2_O4 = Tuni_O3_O : 		 1.0 ; 
+{18.}      T_RO2_O3 = Tuni_O2_O : 		 1.0 ; 
+{19.}      T_RO2_O5 = Tuni_O4_O : 		 1.0 ; 
+
+//Peroxy radicals reacting with HO2 forming closed shell with -OOH: RO2 + HO2 -> ROOH 
+{20.}      T_RO2_O2 + HO2 = T_O0_OOH : 		KRO2HO2*0.9 ; 
+{21.}      T_RO2_O4 + HO2 = T_O2_OOH : 		KRO2HO2*0.9 ; 
+{22.}      T_RO2_O3 + HO2 = T_O1_OOH : 		KRO2HO2*0.9 ; 
+{23.}      T_RO2_O5 + HO2 = T_O3_OOH : 		KRO2HO2*0.9 ; 
+
+//RO2 reacting with HO2 forming RO + O2 + OH: 
+//RO2* + HO2 -> RO* + O2 + OH 
+{24.}      T_RO2_O2 + HO2 = T_RO_O1 + OH : 		KRO2HO2*0.1; 
+{25.}      T_RO2_O4 + HO2 = T_RO_O3 + OH : 		KRO2HO2*0.1; 
+{26.}      T_RO2_O3 + HO2 = T_RO_O2 + OH : 		KRO2HO2*0.1; 
+{27.}      T_RO2_O5 + HO2 = T_RO_O4 + OH : 		KRO2HO2*0.1; 
+
+//RO2 reacting with sum of RO2s forming ROH by O removal and H addition: 
+//RO2" + sum(RO2) -> ROH"; CxHyOz -> CxH(y+1)O(z-1) 
+//{28.}      T_RO2_O2 = T_O-1_2OH : 		RO2*1e-13*0.3 ; 
+{29.}      T_RO2_O4 = T_O1_2OH : 		RO2*1e-13*0.3 ; 
+{30.}      T_RO2_O3 = T_O0_2OH : 		RO2*1e-13*0.3 ; 
+{31.}      T_RO2_O5 = T_O2_2OH : 		RO2*1e-13*0.3 ; 
+
+//RO2 reacting with sum of RO2s forming alkoxy radical by O removal: 
+//RO2* + sum(RO2) -> RO* 
+{32.}      T_RO2_O2 = T_RO_O1 : 		RO2*1e-13*0.3; 
+{33.}      T_RO2_O4 = T_RO_O3 : 		RO2*1e-13*0.3; 
+{34.}      T_RO2_O3 = T_RO_O2 : 		RO2*1e-13*0.3; 
+{35.}      T_RO2_O5 = T_RO_O4 : 		RO2*1e-13*0.3; 
+
+//RO2 reacting with sum of RO2s forming R=O by OH removal: 
+//RO2" + sum(RO2) -> R=O"; CxHyOz -> CxH(y-1)O(z-1) 
+{36.}      T_RO2_O2 = T_O0_O : 		RO2*1e-13*0.4 ; 
+{37.}      T_RO2_O4 = T_O2_O : 		RO2*1e-13*0.4 ; 
+{38.}      T_RO2_O3 = T_O1_O : 		RO2*1e-13*0.4 ; 
+{39.}      T_RO2_O5 = T_O3_O : 		RO2*1e-13*0.4 ; 
+
+//RO2 dimer formation: RO2 + RO2" -> ROOR" 
+// ROOR formation: T_RO2_O2
+{40.}      T_RO2_O2 + T_RO2_O2 = TO1_TO1 : 		1e-13*1.0 ; 
+{41.}      T_RO2_O2 + T_RO2_O4 = TO1_TO3 : 		1e-13*1.0 ; 
+{42.}      T_RO2_O2 + T_RO2_O3 = TO1_TO2 : 		1e-13*1.0 ; 
+{43.}      T_RO2_O2 + T_RO2_O5 = TO1_TO4 : 		1e-13*1.0 ; 
+// ROOR formation: T_RO2_O4
+{44.}      T_RO2_O4 + T_RO2_O4 = TO3_TO3 : 		1e-13*1.0 ; 
+{45.}      T_RO2_O4 + T_RO2_O3 = TO3_TO2 : 		1e-13*1.0 ; 
+{46.}      T_RO2_O4 + T_RO2_O5 = TO3_TO4 : 		1e-13*1.0 ; 
+// ROOR formation: T_RO2_O3
+{47.}      T_RO2_O3 + T_RO2_O3 = TO2_TO2 : 		1e-13*1.0 ; 
+{48.}      T_RO2_O3 + T_RO2_O5 = TO2_TO4 : 		1e-13*1.0 ; 
+// ROOR formation: T_RO2_O5
+{49.}      T_RO2_O5 + T_RO2_O5 = TO4_TO4 : 		1e-13*1.0 ; 
+
+
+#LOOKATALL                      { Output all species to small_strato.dat}
+#MONITOR TOY;  { Print selected species to screen        }
+
+// #CHECK O; N;                    { Check Mass Balance of oxygen & nitrogen }
+
+#INITVALUES                     { Set initial values of species           }
+  CFACTOR = 1.    ;             { and set units conversion factor to 1    }
+  TOY = 3.10E+11 ;
+  OH = 1.90E+5 ;
+  O3  = 1.80E+12 ;
+  HO2 = 4.30E+7 ;
+  NO  = 1.10E+8 ;
+
+{ Fortran code to be inlined into ROOT_Global }
+#INLINE F90_INIT
+  TSTART = 0
+  TEND = TSTART + 100
+  DT = 1
+  TEMP = 270
+#ENDINLINE
+
+
+#INLINE F90_RCONST
+REAL(dp)::KRO2HO2, KRO2NO, KDEC, RO2
+KRO2HO2 = 2.91E-13*EXP(1300./TEMP)
+KRO2NO = 2.7E-12*EXP(360./TEMP)
+KDEC = 1.00E+06
+RO2 = C(ind_T_RO2_O2) + C(ind_T_RO2_O4) + C(ind_T_RO2_O3) + C(ind_T_RO2_O5)
+#ENDINLINE

@@ -1,0 +1,58 @@
+defaults: &defaults
+  # logging
+  base_dir: tb_logs
+  name: coll_difforigin
+  version: default
+
+  # training
+  n_epochs: 10000
+  learning_rate: 0.01
+  batch_size: 64
+  val_interval: 100
+  ckpt_keep: 10
+  ckpt_interval: 1000
+
+  # data
+  n_series: 1
+  rand_init: False
+  sample:  # resample in time dim, reduce by a factor of 'step'
+    step: 10
+  chuck:  # chuck from entire trajectory
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+  dydt: diff_origin  # how derivative for coll training is computed [diff_interpolate, diff_origin, mlp_output]
+  
+  # model
+  restore: null  # restore from ckpt
+  nODE: CRNN  # init which model as neural ODE
+  phy_loss:
+    alpha: 0.1
+
+
+rober:
+  <<: *defaults
+  chem: rober
+  version: rober1_chk50
+  chuck:
+    chuck_len: 50
+    stride_len: 50
+    ratio: 1
+
+pollu:
+  <<: *defaults
+  chem: pollu
+  version: pollu1::10_chk10
+  chuck:
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
+
+toy:
+  <<: *defaults
+  chem: toy
+  version: toy1::10_chk10
+  chuck:
+    chuck_len: 10
+    stride_len: 10
+    ratio: 1
