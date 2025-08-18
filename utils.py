@@ -86,7 +86,7 @@ def load_config():
         config_dict = yaml.safe_load(f).get(args.target)
         
     if config_dict is None:
-        raise ValueError(f"Target '{target_key}' not found in config.")
+        raise ValueError(f"Target '{args.target}' not found in config.")
 
     # Override YAML with non-None CLI args
     for key, value in vars(args).items():

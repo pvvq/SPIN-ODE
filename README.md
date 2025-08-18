@@ -40,7 +40,7 @@ python nnrr-jax.py --config configs/spin.yaml --target rober_fit
 # step 2: train CRNN with deriv from interpolated traj inferenced by MLP
 python nnrr-jax-coll.py --config configs/spin.yaml --target rober_coll
 
-# step : fine-tune on CRNN with estimated rate coefficient
+# step 3: fine-tune on CRNN with estimated rate coefficient
 python nnrr-jax.py --config configs/spin.yaml --target rober_tune
 ```
 
