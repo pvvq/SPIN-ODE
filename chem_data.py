@@ -3,10 +3,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from scipy.integrate import odeint, solve_ivp
 
-# https://github.com/Xiangjun-Huang/training_stiff_NODE_in_WW_modelling/blob/348f32da56a86ae57462910a7eaab2352a014e1f/ASM1_Python/collocate_data_torch.py
-# from collocate_data_torch import collocate_data_torch
-
-# from readfdat import csv_from_dat
 
 # K literal for toy 44 scheme
 TEMP = 270
@@ -375,35 +371,6 @@ class TOY(ChemistryScheme):
         
         return np.array(y_list), np.array(t_list)
 
-class AEDataset(Dataset):
-    def __init__(self, y, t):
-        self.y = torch.tensor(y)
-        self.t = torch.tensor(t)
-        self.num_series = self.t.shape[0]
-        self.num_steps = self.t.shape[1]
-        self.size = self.num_series * self.num_steps
-        self.series_idxs = torch.randint(self.num_series, (self.size,))
-        self.step_idxs = torch.randint(4, self.num_steps-5, (self.size,))
-
-    def __len__(self):
-        return self.size
-
-    def __getitem__(self, idx):
-        i_series = self.series_idxs[idx]
-        current_t = self.step_idxs[idx]
-        # history_t = torch.randint(0, current_t, (4,))
-        # history_t.sort()
-        history_dt = torch.arange(-4, 1)
-        # future_t = torch.randint(current_t+1, self.num_steps, (5,))
-        future_dt = np.arange(1, 6, 1)
-        # np.random.shuffle(future_dt)
-        return {
-            'history_dt': history_dt ,
-            'future_dt' : future_dt,
-            'global':    self.y[i_series].transpose(1,0),
-            'initial':   self.y[i_series][current_t + history_dt].transpose(1,0),
-            'target':    self.y[i_series][current_t + future_dt].transpose(1,0),
-        }
 
 class ChuckDataset(Dataset):
     """Break trajectories into chucks with optional slicing and random sample"""
@@ -443,55 +410,3 @@ class ChuckDataset(Dataset):
             "conc": self.ny[idx_series, start+self.idx_sample],  # [seq_len, n_spc]
             "time": self.nt[idx_series, start+self.idx_sample],  # [seq_len]
         }
-
-
-class CollocateDataset(Dataset):
-    def __init__(self, y_arr, t_arr, dy_arr=None, diff="finite"):
-        self.t_arr = torch.tensor(t_arr)  # [n, n_t]
-        self.y_arr = torch.tensor(y_arr)  # [n, n_t, n_spc]
-        self.num_series = y_arr.shape[0]
-        self.num_spc = y_arr.shape[2]
-        if dy_arr is not None:
-            self.dy_arr = torch.tensor(dy_arr)  # [n, n_t, n_spc]
-            self.prepare_no_transform_data()
-        else:
-            if diff=="local_reg":
-                self.prepare_collocate_data()    # opt 1: non-parametric regression
-            elif diff=="finite":
-                self.prepare_finite_diff_data()  # opt 2: finite diff
-
-    def prepare_collocate_data(self):
-        # compute dy use y and t
-        yy_list = []
-        dy_list = []
-        for i in range(self.num_series):
-            yy, dy = collocate_data_torch(self.t_arr[i], self.y_arr[i].unsqueeze(dim=1), kernel_str="LogisticKernel")
-            yy_list.append(yy.transpose(1, 0))
-            dy_list.append(dy.transpose(1, 0))
-        self.yy_arr = torch.cat(yy_list, dim=0)
-        self.dy_arr = torch.cat(dy_list, dim=0)
-        tunc_idx = 3  # omit margin which are usually not well fitted
-        self.yy_flat = self.yy_arr[:,tunc_idx:-tunc_idx].reshape(-1, self.num_spc)  # [n, n_spc]
-        self.dy_flat = self.dy_arr[:,tunc_idx:-tunc_idx].reshape(-1, self.num_spc)  # [n, n_spc]
-        self.tt_flat = self.t_arr[:,tunc_idx:-tunc_idx].reshape(-1, 1)  # [n, 1]
-
-    def prepare_finite_diff_data(self):
-        dy_list = []
-        for i in range(self.num_series):
-            dy_list.append(torch.gradient(self.y_arr[i], dim=0, spacing=(self.t_arr[i],))[0].unsqueeze(0))
-        self.dy_arr = torch.cat(dy_list, dim=0)
-        self.tt_flat = self.t_arr.reshape(-1, 1)  # [n, n_spc]
-        self.yy_flat = self.y_arr.reshape(-1, self.num_spc)  # [n, n_spc]
-        self.dy_flat = self.dy_arr.reshape(-1, self.num_spc)  # [n, n_spc]
-
-    def prepare_no_transform_data(self):
-        self.tt_flat = self.t_arr.reshape(-1, 1)  # [n, n_spc]
-        self.yy_flat = self.y_arr.reshape(-1, self.num_spc)  # [n, n_spc]
-        self.dy_flat = self.dy_arr.reshape(-1, self.num_spc)  # [n, n_spc]
-
-    def __len__(self):
-        return self.dy_flat.shape[0]
-
-    def __getitem__(self, idx):
-        return {'time':self.tt_flat[idx], 'conc':self.yy_flat[idx], 'dcdt':self.dy_flat[idx]}
-
