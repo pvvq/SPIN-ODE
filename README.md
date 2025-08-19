@@ -9,9 +9,7 @@ the true data (light colour → dark colour).
 </p>
 
 ## Environment
-The code was developed in a `jax` python env in a `module` system, packages included is listed [here](https://a3s.fi/python-pkg-lists/jax.txt)
-
-Additional package is `diffrax`.
+Dependent Python packages are lised in `requirements.txt` and `requirements_ver.txt`.
 
 ## Data
 We use 3 dataset:
@@ -44,8 +42,13 @@ python nnrr-jax-coll.py --config configs/spin.yaml --target rober_coll
 python nnrr-jax.py --config configs/spin.yaml --target rober_tune
 ```
 
-## Acknowledgement
+## Credits
+This project includes code derived from [PyCHAM](https://github.com/simonom/PyCHAM) by Simon O'Meara and contributors, licensed under GNU GPLv3.
+
 - [Diffrax](https://docs.kidger.site/diffrax/citation/)
 - [CRNN](https://github.com/DENG-MIT/CRNN)
 - [Stiff Neural ODE](https://github.com/DENG-MIT/StiffNeuralODE)
 - [Collocation training for stiff neural ODE](https://github.com/Xiangjun-Huang/training_stiff_NODE_in_WW_modelling)
+
+# License
+This project is licenced under GNU GPLv3, see LICENSE for details.

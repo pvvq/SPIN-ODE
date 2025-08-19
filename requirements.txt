@@ -1,0 +1,15 @@
+diffrax
+einops
+flax
+fortranformat
+jax
+matplotlib
+numpy
+optax
+orbax
+PyYAML
+PyYAML
+scikit_learn
+scipy
+torch
+tqdm
