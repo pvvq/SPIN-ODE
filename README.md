@@ -21,8 +21,8 @@ Robertson and POLLU dataset are simulated by the Scipy BDF stiff ODE solver. AOX
 
 ## Run
 There are two training scripts:
-- [`nnrr-jax.py`](nnrr-jax.py): neural ODE training, where the network is followed by ODE solver to train on concentration.
-- [`nnrr-jax-coll.py`](nnrr-jax-coll.py): pre-training, where network is trained on collocation dataset.
+- [`nnrr-jax.py`](nnrr-jax.py): neural ODE training, where the network is coupled with ODE solver to integrate and fit concentration trajectory.
+- [`nnrr-jax-coll.py`](nnrr-jax-coll.py): pre-training, where network is trained on estimated time derivative.
 
 All features/hyper-parameters are controlled by `yaml` config files. Examples are provided in [`config/`](config) folder. Each script is for one experiment setup, in which there are `yaml` target for different dataset and training steps.
 
@@ -42,9 +42,7 @@ python nnrr-jax-coll.py --config configs/spin.yaml --target rober_coll
 python nnrr-jax.py --config configs/spin.yaml --target rober_tune
 ```
 
-## Credits
-This project includes code derived from [PyCHAM](https://github.com/simonom/PyCHAM) by Simon O'Meara and contributors, licensed under GNU GPLv3.
-
+## Acknowledgements
 - [Diffrax](https://docs.kidger.site/diffrax/citation/)
 - [CRNN](https://github.com/DENG-MIT/CRNN)
 - [Stiff Neural ODE](https://github.com/DENG-MIT/StiffNeuralODE)
