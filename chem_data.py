@@ -3,6 +3,10 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from scipy.integrate import odeint, solve_ivp
 
+# https://github.com/Xiangjun-Huang/training_stiff_NODE_in_WW_modelling/blob/348f32da56a86ae57462910a7eaab2352a014e1f/ASM1_Python/collocate_data_torch.py
+# from collocate_data_torch import collocate_data_torch
+
+# from readfdat import csv_from_dat
 
 # K literal for toy 44 scheme
 TEMP = 270
@@ -410,3 +414,55 @@ class ChuckDataset(Dataset):
             "conc": self.ny[idx_series, start+self.idx_sample],  # [seq_len, n_spc]
             "time": self.nt[idx_series, start+self.idx_sample],  # [seq_len]
         }
+
+
+class CollocateDataset(Dataset):
+    def __init__(self, y_arr, t_arr, dy_arr=None, diff="finite"):
+        self.t_arr = torch.tensor(t_arr)  # [n, n_t]
+        self.y_arr = torch.tensor(y_arr)  # [n, n_t, n_spc]
+        self.num_series = y_arr.shape[0]
+        self.num_spc = y_arr.shape[2]
+        if dy_arr is not None:
+            self.dy_arr = torch.tensor(dy_arr)  # [n, n_t, n_spc]
+            self.prepare_no_transform_data()
+        else:
+            if diff=="local_reg":
+                self.prepare_collocate_data()    # opt 1: non-parametric regression
+            elif diff=="finite":
+                self.prepare_finite_diff_data()  # opt 2: finite diff
+
+    def prepare_collocate_data(self):
+        # compute dy use y and t
+        yy_list = []
+        dy_list = []
+        for i in range(self.num_series):
+            yy, dy = collocate_data_torch(self.t_arr[i], self.y_arr[i].unsqueeze(dim=1), kernel_str="LogisticKernel")
+            yy_list.append(yy.transpose(1, 0))
+            dy_list.append(dy.transpose(1, 0))
+        self.yy_arr = torch.cat(yy_list, dim=0)
+        self.dy_arr = torch.cat(dy_list, dim=0)
+        tunc_idx = 3  # omit margin which are usually not well fitted
+        self.yy_flat = self.yy_arr[:,tunc_idx:-tunc_idx].reshape(-1, self.num_spc)  # [n, n_spc]
+        self.dy_flat = self.dy_arr[:,tunc_idx:-tunc_idx].reshape(-1, self.num_spc)  # [n, n_spc]
+        self.tt_flat = self.t_arr[:,tunc_idx:-tunc_idx].reshape(-1, 1)  # [n, 1]
+
+    def prepare_finite_diff_data(self):
+        dy_list = []
+        for i in range(self.num_series):
+            dy_list.append(torch.gradient(self.y_arr[i], dim=0, spacing=(self.t_arr[i],))[0].unsqueeze(0))
+        self.dy_arr = torch.cat(dy_list, dim=0)
+        self.tt_flat = self.t_arr.reshape(-1, 1)  # [n, n_spc]
+        self.yy_flat = self.y_arr.reshape(-1, self.num_spc)  # [n, n_spc]
+        self.dy_flat = self.dy_arr.reshape(-1, self.num_spc)  # [n, n_spc]
+
+    def prepare_no_transform_data(self):
+        self.tt_flat = self.t_arr.reshape(-1, 1)  # [n, n_spc]
+        self.yy_flat = self.y_arr.reshape(-1, self.num_spc)  # [n, n_spc]
+        self.dy_flat = self.dy_arr.reshape(-1, self.num_spc)  # [n, n_spc]
+
+    def __len__(self):
+        return self.dy_flat.shape[0]
+
+    def __getitem__(self, idx):
+        return {'time':self.tt_flat[idx], 'conc':self.yy_flat[idx], 'dcdt':self.dy_flat[idx]}
+
