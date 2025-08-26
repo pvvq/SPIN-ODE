@@ -24,9 +24,10 @@ echo "===== SLURM SCRIPT  ====="
 cat $0
 echo "==================================="
 
-module load jax
-source venv_spinode/bin/activate
-alias python="srun venv_spinode/bin/python"
+# TODO: setup python environment
+# module load jax
+# source venv_spinode/bin/activate
+# alias python="srun venv_spinode/bin/python"
 
 
 # proposed approach
