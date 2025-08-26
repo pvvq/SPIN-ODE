@@ -27,7 +27,7 @@ from flax import nnx
 import optax
 import orbax.checkpoint as ocp
 
-from chem_data import TOY, ROBER, POLLU, AEDataset, CollocateDataset, ChuckDataset
+from chem_data import *
 from nn_jax import *
 
 np.printoptions(precision=0, linewidth=300)
@@ -63,13 +63,13 @@ finit_ddy = np.gradient(finit_dy, t_arr[0], axis=1)
 scale['ddyMax'] = np.max(finit_ddy, axis=(0,1))
 scale['ddyMin'] = np.min(finit_ddy, axis=(0,1))
 scale['ddyScale'] = np.where(scale['ddyMax']-scale['ddyMin'] == 0.0, scale['ddyMax'], scale['ddyMax']-scale['ddyMin'])
-fig = plot_series(y_arr[0])
-fig.savefig("finit_y.png", dpi=300)
-fig = plot_series(finit_dy[0])
-fig.savefig("finit_dy.png", dpi=300)
-fig = plot_series(finit_ddy[0])
-fig.savefig("finit_ddy.png", dpi=300)
-plt.close(fig)
+# fig = plot_series(y_arr[0])
+# fig.savefig("finit_y.png", dpi=300)
+# fig = plot_series(finit_dy[0])
+# fig.savefig("finit_dy.png", dpi=300)
+# fig = plot_series(finit_ddy[0])
+# fig.savefig("finit_ddy.png", dpi=300)
+# plt.close(fig)
 
 # coll_dataset = CollocateDataset(y_arr, t_arr)
 yt_dataset = ChuckDataset(

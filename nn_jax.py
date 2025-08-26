@@ -4,7 +4,6 @@ from flax import nnx
 import diffrax
 from torch.utils.data import default_collate
 from einops import rearrange
-from scipy.optimize import nnls
 
 def SMSPELoss(pred, truth):
     """Symmetric Mean Squared Percentage Error"""

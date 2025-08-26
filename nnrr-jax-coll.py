@@ -26,7 +26,7 @@ import optax
 import orbax.checkpoint as ocp
 from scipy.signal import savgol_filter
 
-from chem_data import TOY, ROBER, POLLU, AEDataset, CollocateDataset, ChuckDataset
+from chem_data import *
 from nn_jax import *
 
 np.printoptions(precision=0, linewidth=300)
