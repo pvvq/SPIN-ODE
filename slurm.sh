@@ -2,8 +2,8 @@
 #SBATCH --job-name=SPIN_ODE
 #SBATCH --output=soutput/SPIN_ODE/%j.out
 #SBATCH --account=project_2009907
-#SBATCH --partition=gpusmall
-#SBATCH --time=02:15:00
+#SBATCH --partition=gputest
+#SBATCH --time=00:15:00
 #SBATCH --ntasks=1
 
 #SBATCH --cpus-per-task=16
@@ -25,8 +25,8 @@ cat $0
 echo "==================================="
 
 module load jax
-source /scratch/project_2009907/nn_reaction_rate/venv_jax/bin/activate
-alias python="srun /scratch/project_2009907/nn_reaction_rate/venv_jax/bin/python"
+source venv_spinode/bin/activate
+alias python="srun venv_spinode/bin/python"
 
 
 # proposed approach
