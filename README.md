@@ -5,7 +5,7 @@ SPIN-ODE fits concentration trajectories (a) to infer reaction rate coefficients
 the true data (light colour → dark colour).
 
 <p align="center">
-    <img src="teaser.png" alt="teaser" width="75%">
+    <img src="plots/teaser.png" alt="teaser" width="75%">
 </p>
 
 ## Environment

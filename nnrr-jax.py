@@ -29,6 +29,7 @@ import orbax.checkpoint as ocp
 
 from chem_data import *
 from nn_jax import *
+from plots.plot import *
 
 np.printoptions(precision=0, linewidth=300)
 torch.set_default_dtype(torch.float64)

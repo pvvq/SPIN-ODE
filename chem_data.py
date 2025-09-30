@@ -431,7 +431,7 @@ if __name__ == "__main__":
     print(y_arr.shape)
 
 
-    from utils import plot_series
+    from plots.plot import plot_series
     chem = ROBER()
     y_arr, t_arr = chem.data(1)
     fig = plot_series(y_arr[0], t=t_arr[0])
