@@ -1,8 +1,9 @@
+data*/
 venv*/
 .vscode/
-soutput/
-tb_logs/
-*.png
+*output*/
+*logs*/
+plots/*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

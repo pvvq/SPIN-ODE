@@ -40,9 +40,9 @@ print(jax.devices(), jax.default_backend())
 
 if config['chem'] == 'rober':   chem = ROBER()
 elif config['chem'] == 'pollu': chem = POLLU()
-elif config['chem'] == 'toy':   chem = TOY(data_dir="results_t100_dt1_10")
+elif config['chem'] == 'toy':   chem = TOY()
 
-y_arr, t_arr = chem.data(config['n_series'], config['rand_init'])
+y_arr, t_arr = chem.data(config['n_series'], rand=config['rand_init'])
 if 'sample' in config:  # resample in time dim, reduce by a factor of 'step'
     y_arr = y_arr[:,::config['sample']['step'],:]
     t_arr = t_arr[:,::config['sample']['step']]

@@ -1,7 +1,6 @@
 diffrax
 einops
 flax
-fortranformat
 jax
 matplotlib
 numpy

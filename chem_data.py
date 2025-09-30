@@ -1,14 +1,13 @@
+from pathlib import Path
+
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
-from scipy.integrate import odeint, solve_ivp
+from torch.utils.data import Dataset
+from scipy.integrate import solve_ivp
 
 # https://github.com/Xiangjun-Huang/training_stiff_NODE_in_WW_modelling/blob/348f32da56a86ae57462910a7eaab2352a014e1f/ASM1_Python/collocate_data_torch.py
 # from collocate_data_torch import collocate_data_torch
 
-# from readfdat import csv_from_dat
-
-# K literal for toy 44 scheme
 TEMP = 270
 K_LITERAL = {
     'KRO2NO': 2.7E-12*np.exp(360./TEMP),
@@ -16,8 +15,6 @@ K_LITERAL = {
     'KDEC': 1.00E+06,
     'RO2': 1,  # Replace as 1 for now, use concentration later
 }
-# RO2 = C(ind_T_RO2_O2) + C(ind_T_RO2_O4) + C(ind_T_RO2_O3) + C(ind_T_RO2_O5)
-RO2_SPC = ['T_RO2_O2', 'T_RO2_O4', 'T_RO2_O3', 'T_RO2_O5']
 
 SORT_RATE = False
 
@@ -145,6 +142,14 @@ def_toy_44_text = """
 {49.}      T_RO2_O5 + T_RO2_O5 = TO4_TO4 : 		1e-13*1.0 ; 
 """
 
+toy_44_init_conc_text = """
+  TOY = 3.10E+11 ;
+  OH = 1.90E+5 ;
+  O3  = 1.80E+12 ;
+  HO2 = 4.30E+7 ;
+  NO  = 1.10E+8 ;
+"""
+
 class ChemistryScheme():
     """
     Reaction
@@ -173,14 +178,15 @@ class ChemistryScheme():
 
     def parse_scheme(self, scheme_id):
         if scheme_id == "toy_44":
-            # filename = scheme_id+".def"
-            # with open(filename) as f:
-            #     def_text = [line for line in f]
             def_text = def_toy_44_text.split('\n')
+            # RO2 = C(ind_T_RO2_O2) + C(ind_T_RO2_O4) + C(ind_T_RO2_O3) + C(ind_T_RO2_O5)
+            RO2_SPC = ['T_RO2_O2', 'T_RO2_O4', 'T_RO2_O3', 'T_RO2_O5']
         elif scheme_id == "rober":
             def_text = def_rober_text.split('\n')
+            RO2_SPC = []
         elif scheme_id == "pollu":
             def_text = def_pollu_text.split('\n')
+            RO2_SPC = []
 
         species = []
         reactions_text = []
@@ -209,24 +215,19 @@ class ChemistryScheme():
                     species.append(product)
             rconst_text.append(rate)
             
-        # For toy44, replace K literal
-        if scheme_id == "toy_44":
-            self.RO2_IDX = []
-            self.RO2_K_IDX = []
-            for i, text in enumerate(rconst_text):
-                for t in text.split('*'):
-                    if t == "RO2":
-                        self.RO2_K_IDX.append(i)
-                    if t in K_LITERAL.keys():
-                        text = text.replace(t, str(K_LITERAL[t]))
-                rconst.append(eval(text))
-            for spc in RO2_SPC:
-                self.RO2_IDX.append(species.index(spc))
-        else:
-            for i, text in enumerate(rconst_text):
-                rconst.append(eval(text))
-            
-        # print(reactions_text)
+        # replace K literal
+        self.RO2_IDX = []
+        self.RO2_K_IDX = []
+        for i, text in enumerate(rconst_text):
+            for t in text.split('*'):
+                if t == "RO2":
+                    self.RO2_K_IDX.append(i)
+                if t in K_LITERAL.keys():
+                    text = text.replace(t, str(K_LITERAL[t]))
+            rconst.append(eval(text))
+        for spc in RO2_SPC:
+            self.RO2_IDX.append(species.index(spc))
+
         # convert spc text to idx
         for reactants, products, rate in reactions_text:
             reactants_id = [species.index(reactant) for reactant in reactants]
@@ -244,29 +245,25 @@ class ChemistryScheme():
             for product in products:
                 coef_out[product][i] += 1
         return coef_in, coef_out
+    
+    def rate_ode(self, t, y):
+        RO2 = np.sum(y[self.RO2_IDX])
+        rate = self.rconst * np.prod(y[:, None] ** self.coef_in, axis=0)
+        rate[self.RO2_K_IDX] *= RO2
+        dc_dt  = self.coef_out @ rate
+        return dc_dt
 
 
 class ROBER(ChemistryScheme):
     def __init__(self):
         super().__init__(scheme_id="rober")
 
-    @staticmethod
-    def ode(t, y):
-        k = np.array([0.04, 3e7, 1e4])
-        dydt = np.array([
-            -k[0]*y[0] + k[2]*y[1]*y[2],
-             k[0]*y[0] - k[2]*y[1]*y[2] - k[1]*y[1]*y[1],
-             k[1]*y[1]*y[1]
-        ])
-        return dydt
-
     def data(self, num_series, rand=False):  # rand unimplement
         y_list, t_list = [], []
         for i in range(num_series):
             y0 = np.array([1.0, 0.0, 0.0])
             t = np.logspace(-5, 5, num=50)
-            # ode_np = lambda t, y: np.array(ROBER.ode(t, jnp.array(y)))  # slow!
-            sol = solve_ivp(fun=ROBER.ode, t_span=(0, t[-1]), y0=y0, method="BDF", t_eval=t, rtol=1e-4, atol=[1.0e-8, 1.0e-14, 1.0e-6])
+            sol = solve_ivp(fun=self.rate_ode, t_span=(0, t[-1]), y0=y0, method="BDF", t_eval=t, rtol=1e-4, atol=[1.0e-8, 1.0e-14, 1.0e-6])
             y_list.append(sol.y.transpose(1, 0))
             t_list.append(t)
         return np.array(y_list), np.array(t_list)
@@ -276,104 +273,63 @@ class POLLU(ChemistryScheme):
         super().__init__(scheme_id="pollu")
         self.rng = np.random.RandomState(42)
 
-    @staticmethod
-    def ode(t, y):
-        k = np.array([
-                0.35e0, 0.266e2, 0.123e5, 0.86e-3, 0.82e-3, 0.15e5, 0.13e-3, 0.24e5, 0.165e5, 0.9e4,
-                0.22e-1, 0.12e5, 0.188e1, 0.163e5, 0.48e7, 0.35e-3, 0.175e-1, 0.1e9, 0.444e12, 0.124e4,
-                0.21e1, 0.578e1, 0.474e-1, 0.178e4, 0.312e1
-        ])
-    
-        r = np.array([
-            k[0] * y[0],
-            k[1] * y[1] * y[3],
-            k[2] * y[4] * y[1],
-            k[3] * y[6],
-            k[4] * y[6],
-            k[5] * y[6] * y[5],
-            k[6] * y[8],
-            k[7] * y[8] * y[5],
-            k[8] * y[10] * y[1],
-            k[9] * y[10] * y[0],
-            k[10] * y[12],
-            k[11] * y[9] * y[1],
-            k[12] * y[13],
-            k[13] * y[0] * y[5],
-            k[14] * y[2],
-            k[15] * y[3],
-            k[16] * y[3],
-            k[17] * y[15],
-            k[18] * y[15],
-            k[19] * y[16] * y[5],
-            k[20] * y[18],
-            k[21] * y[18],
-            k[22] * y[0] * y[3],
-            k[23] * y[18] * y[0],
-            k[24] * y[19]
-        ])
-    
-        dydt = np.array([
-            -r[0] - r[9] - r[13] - r[22] - r[23] + r[1] + r[2] + r[8] + r[10] + r[11] + r[21] + r[24],
-            -r[1] - r[2] - r[8] - r[11] + r[0] + r[20],
-            -r[14] + r[0] + r[16] + r[18] + r[21],
-            -r[1] - r[15] - r[16] - r[22] + r[14],
-            -r[2] + r[3] + r[3] + r[5] + r[6] + r[12] + r[19],
-            -r[5] - r[7] - r[13] - r[19] + r[2] + r[17] + r[17],
-            -r[3] - r[4] - r[5] + r[12],
-            r[3] + r[4] + r[5] + r[6],
-            -r[6] - r[7],
-            -r[11] + r[6] + r[8],
-            -r[8] - r[9] + r[7] + r[10],
-            r[8],
-            -r[10] + r[9],
-            -r[12] + r[11],
-            r[13],
-            -r[17] - r[18] + r[15],
-            -r[19],
-            r[19],
-            -r[20] - r[21] - r[23] + r[22] + r[24],
-            -r[24] + r[23]
-        ])
-        return dydt
-
     def data(self, num_series, rand=False):
         y_list, t_list = [], []
         for i in range(num_series):
             # Initial conditions
             u0 = np.zeros(20)
+            u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]
             if rand:
-                u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007] * self.rng.uniform(0.99, 1.01, size=(6,))  # rand by 0.1
-            else:
-                u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]  # no rand init
-            t = np.linspace(0, 0.1, num=100)
-            # ode_np = lambda t, y: np.array(POLLU.ode(t, jnp.array(y)))  # slow!
-            sol = solve_ivp(fun=POLLU.ode, t_span=(0, t[-1]), y0=u0, method="BDF", t_eval=t)
+                u0 *= self.rng.uniform(0.99, 1.01, size=u0.shape)  # rand by 0.1
+            # t = np.linspace(0, 0.1, num=100)
+            t = np.array([1,60])
+            sol = solve_ivp(fun=self.rate_ode, t_span=(0, t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
             y_list.append(sol.y.transpose(1, 0))
             t_list.append(t)
         return np.array(y_list), np.array(t_list)
 
 class TOY(ChemistryScheme):
-    def __init__(self, data_dir):
+    def __init__(self):
         super().__init__(scheme_id="toy_44")
-        self.data_dir = data_dir
 
-    def data(self, num_series, rand=False):  # rand unimplement
+    def _data_solveivp(self, num_series, rand=False):
+        y_list, t_list = [], []
+        for i in range(num_series):
+            # Initial conditions
+            u0 = np.zeros(self.num_spc)
+            for line in [line.strip(" \n;") for line in toy_44_init_conc_text.split("\n")]:
+                if "=" in line:
+                    spc_name, init_val = line.split("=")
+                    u0[self.spc_names.index(spc_name.strip())] = float(init_val)
+            if rand:
+                u0 *= self.rng.uniform_(0.99, 1.01, size=u0.shape)  # rand by 0.1
+            t = np.arange(101)
+            sol = solve_ivp(fun=self.rate_ode, t_span=(0, t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
+            y_list.append(sol.y.transpose(1, 0))
+            t_list.append(t)
+        return np.array(y_list), np.array(t_list)
+
+    def _data_csv(self, filepath: str | Path):
+        filepath = Path(filepath)
+        with open(filepath, 'r') as f:
+            header = (f.readline().strip("# \n")).split(',')
+        permutation = [header.index(spc) for spc in self.spc_names]
+        series = np.loadtxt(filepath, delimiter=',', skiprows=1)
+        return series[:, permutation], series[:, 0]*3600
+
+    def _data_KPP(self, num_series):  # rand unimplement
         """Load data simulated by KPP"""
         y_list, t_list = [], []
         for i in range(num_series):
-            csv_file = f"{self.data_dir}/sed_{i+1}.csv"
-            try:
-                with open(csv_file, 'r') as f:
-                    header = (f.readline().strip("# \n")).split(',')
-            except FileNotFoundError as e:
-                print(f"File not found: {e}")
-                print("Maybe requested more than exist?")
-            permutation = [header.index(spc) for spc in self.spc_names]
-            series = np.loadtxt(csv_file, delimiter=',', skiprows=1)
-            t_list.append(series[:, 0]*3600)
-            y_list.append(series[:, permutation])
+            csv_file = f"data_t100_dt1_10/sed_{i+1}.csv"
+            y, t = self._data_csv(csv_file)
+            y_list.append(y)
+            t_list.append(t)
         
         return np.array(y_list), np.array(t_list)
+    
+    def data(self, *args, rand=False, **kwargs):
+        return self._data_KPP(*args, **kwargs)
 
 
 class ChuckDataset(Dataset):
@@ -466,3 +422,35 @@ class CollocateDataset(Dataset):
     def __getitem__(self, idx):
         return {'time':self.tt_flat[idx], 'conc':self.yy_flat[idx], 'dcdt':self.dy_flat[idx]}
 
+if __name__ == "__main__":
+    chem = TOY()
+    y_arr, t_arr = chem._data_solveivp(1)
+    true_toy_44_conc, _ = chem._data_csv("data_t100_dt1_10/toy_44.csv")
+    print("TOY Regression test: ", np.allclose(y_arr[0][-1], true_toy_44_conc[-1], rtol=1e-3))
+    y_arr, t_arr = chem.data(10)
+    print(y_arr.shape)
+
+
+    from utils import plot_series
+    chem = ROBER()
+    y_arr, t_arr = chem.data(1)
+    fig = plot_series(y_arr[0], t=t_arr[0])
+    for ax in fig.axes:
+        ax.set_xscale("log")
+    Path("plots").mkdir(parents=True, exist_ok=True)
+    fig.savefig("plots/pollu.png", dpi=300)
+
+    chem = POLLU()
+    y_arr, t_arr = chem.data(1)
+    print(y_arr[0].shape)
+    
+    # from Verwer, 1994
+    true_end_conc_text = """
+    5.64625548e-02 1.34248413e-01 4.13973433e-09 5.52314021e-03
+    2.01897726e-07 1.46454186e-07 7.78424912e-02 3.24507535e-01
+    7.49401338e-03 1.62229316e-08 1.13586383e-08 2.23050598e-03
+    2.08716288e-04 1.39692102e-05 8.96488486e-03 4.35284637e-18
+    6.89921970e-03 1.00780304e-04 1.77214651e-06 5.68294329e-05
+    """
+    true_end_conc = np.fromstring(true_end_conc_text, sep=' ')
+    print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))

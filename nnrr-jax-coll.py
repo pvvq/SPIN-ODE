@@ -39,7 +39,7 @@ print(jax.devices(), jax.default_backend())
 
 if config['chem'] == 'rober':   chem = ROBER()
 elif config['chem'] == 'pollu': chem = POLLU()
-elif config['chem'] == 'toy':   chem = TOY(data_dir="results_t100_dt1_10")
+elif config['chem'] == 'toy':   chem = TOY()
 
 y_arr, t_arr = chem.data(config['n_series'])  # np: [n, t, s], [n, t]
 # omit beginning induction period
