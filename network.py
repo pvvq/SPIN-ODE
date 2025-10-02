@@ -3,7 +3,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 import diffrax
-from torch.utils.data import default_collate
 from einops import rearrange
 
 def SMSPELoss(pred, truth):
@@ -41,12 +40,6 @@ def TVLoss1D(x, scale, window_size=1):
     
     loss = jnp.mean(tv / scale)
     return loss
-
-def numpy_collate(batch):
-    return jax.tree_util.tree_map(np.asarray, default_collate(batch))
-
-def jax_collate(batch):
-    return jax.tree_util.tree_map(jnp.array, default_collate(batch))
 
 def gradient(x: jnp.ndarray, t: jnp.ndarray = None) -> jnp.ndarray:
     """

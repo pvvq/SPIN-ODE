@@ -5,7 +5,7 @@
 
 # # Neural Reaction Network
 
-from utils import *
+from train_utils import *
 config = load_config()
 print("config:", config)
 
@@ -14,7 +14,6 @@ from pathlib import Path
 from shutil import copyfile
 
 import numpy as np
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import torch
 from torch.utils.data import DataLoader
@@ -24,10 +23,9 @@ import jax.numpy as jnp
 from flax import nnx
 import optax
 import orbax.checkpoint as ocp
-from scipy.signal import savgol_filter
 
-from chem_data import *
-from nn_jax import *
+from chem_data import ROBER, POLLU, TOY, ChuckDataset, CollocateDataset
+from network import *
 from plots.plot import *
 
 np.printoptions(precision=0, linewidth=300)

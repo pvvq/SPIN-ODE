@@ -7,7 +7,7 @@
 
 
 #%%
-from utils import *
+from train_utils import *
 config = load_config()
 print("config:", config)
 
@@ -16,7 +16,6 @@ from pathlib import Path
 from shutil import copyfile
 
 import numpy as np
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import torch
 from torch.utils.data import DataLoader
@@ -28,7 +27,7 @@ import optax
 import orbax.checkpoint as ocp
 
 from chem_data import *
-from nn_jax import *
+from network import *
 from plots.plot import *
 
 np.printoptions(precision=0, linewidth=300)

@@ -4,6 +4,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from scipy.integrate import solve_ivp
+from torch.utils.data import default_collate
+import jax
+import jax.numpy as jnp
 
 # https://github.com/Xiangjun-Huang/training_stiff_NODE_in_WW_modelling/blob/348f32da56a86ae57462910a7eaab2352a014e1f/ASM1_Python/collocate_data_torch.py
 # from collocate_data_torch import collocate_data_torch
@@ -421,6 +424,12 @@ class CollocateDataset(Dataset):
 
     def __getitem__(self, idx):
         return {'time':self.tt_flat[idx], 'conc':self.yy_flat[idx], 'dcdt':self.dy_flat[idx]}
+    
+def numpy_collate(batch):
+    return jax.tree_util.tree_map(np.asarray, default_collate(batch))
+
+def jax_collate(batch):
+    return jax.tree_util.tree_map(jnp.array, default_collate(batch))
 
 if __name__ == "__main__":
     chem = TOY()
