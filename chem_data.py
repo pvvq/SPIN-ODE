@@ -284,8 +284,8 @@ class POLLU(ChemistryScheme):
             u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]
             if rand:
                 u0 *= self.rng.uniform(0.99, 1.01, size=u0.shape)  # rand by 0.1
-            t = np.linspace(0, 0.1, num=100)
-            # t = np.array([1,60])
+            # t = np.linspace(0, 0.1, num=100)
+            t = np.array([1,60])
             sol = solve_ivp(fun=self.rate_ode, t_span=(0, t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
             y_list.append(sol.y.transpose(1, 0))
             t_list.append(t)
@@ -432,22 +432,22 @@ def jax_collate(batch):
     return jax.tree_util.tree_map(jnp.array, default_collate(batch))
 
 if __name__ == "__main__":
-    chem = TOY()
-    y_arr, t_arr = chem._data_solveivp(1)
-    true_toy_44_conc, _ = chem._data_csv("data_t100_dt1_10/toy_44.csv")
-    print("TOY Regression test: ", np.allclose(y_arr[0][-1], true_toy_44_conc[-1], rtol=1e-3))
-    y_arr, t_arr = chem.data(10)
-    print(y_arr.shape)
+    # Regression test for scheme simulator =====================================
+    # chem = TOY()
+    # y_arr, t_arr = chem._data_solveivp(1)
+    # true_toy_44_conc, _ = chem._data_csv("data_t100_dt1_10/toy_44.csv")
+    # print("TOY Regression test: ", np.allclose(y_arr[0][-1], true_toy_44_conc[-1], rtol=1e-3))
+    # y_arr, t_arr = chem.data(10)
+    # print(y_arr.shape)
 
-
-    from plots.plot import plot_series
-    chem = ROBER()
-    y_arr, t_arr = chem.data(1)
-    fig = plot_series(y_arr[0], t=t_arr[0])
-    for ax in fig.axes:
-        ax.set_xscale("log")
-    Path("plots").mkdir(parents=True, exist_ok=True)
-    fig.savefig("plots/pollu.png", dpi=300)
+    # from plots.plot import plot_series
+    # chem = ROBER()
+    # y_arr, t_arr = chem.data(1)
+    # fig = plot_series(y_arr[0], t=t_arr[0])
+    # for ax in fig.axes:
+    #     ax.set_xscale("log")
+    # Path("plots").mkdir(parents=True, exist_ok=True)
+    # fig.savefig("plots/pollu.png", dpi=300)
 
     chem = POLLU()
     y_arr, t_arr = chem.data(1)
@@ -463,3 +463,10 @@ if __name__ == "__main__":
     """
     true_end_conc = np.fromstring(true_end_conc_text, sep=' ')
     print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
+
+    # Regression test for jax rate law and solver ==============================
+    import network as nt
+    rate_law = nt.PowerRateLaw(chem, k_init=chem.rconst)
+    solver = nt.NeuralODE(rate_law)
+    y = solver(t_arr[0], y_arr[0][0])
+    print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))

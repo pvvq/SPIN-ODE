@@ -1,9 +1,11 @@
-import numpy as np
+from typing import Callable
+
 import jax
 import jax.numpy as jnp
 from flax import nnx
 import diffrax
-from einops import rearrange
+
+from chem_data import ChemistryScheme
 
 def SMSPELoss(pred, truth):
     """Symmetric Mean Squared Percentage Error"""
@@ -37,7 +39,7 @@ def TVLoss1D(x, scale, window_size=1):
     # x: [B, t, s]
     diff = x[:, window_size:, :] - x[:, :-window_size, :]
     tv = jnp.square(diff)
-    
+
     loss = jnp.mean(tv / scale)
     return loss
 
@@ -140,59 +142,44 @@ class CRNN(nnx.Module):
     def get_k(self, *args, **kargs):
         return jnp.exp(self.ln_k).reshape(-1)
 
-class NeuralODE(nnx.Module):
-    def __init__(self, ode):
+class PowerRateLaw(nnx.Module):
+    def __init__(self, chem: ChemistryScheme, k_init: jax.Array):
         super().__init__()
-        self.ode = ode  # expects (t, y) → dy, where y is [B, dim]
-        
-        self.stiff_solver = diffrax.Kvaerno3()
-        self.euler_solver = diffrax.Euler()
-        self.adjoint = diffrax.RecursiveCheckpointAdjoint(checkpoints=8192)
-        self.adaptive_step_crtl = diffrax.PIDController(rtol=1e-6, atol=1e-3)
-        self.fix_step_crtl = diffrax.ConstantStepSize()
 
-    def __call__(self, init_conc, time):
-        """
-        Args:
-            init_conc: [B, ...]
-            time: [T]
-        Returns:
-            [B, T, ...]
-        """
-        def _batched_rhs(t, y, args):
-            return self.ode(t, y)
+        self.RO2_IDX = jnp.asarray(chem.RO2_IDX, dtype=jnp.int32)
+        self.RO2_K_IDX = jnp.asarray(chem.RO2_K_IDX, dtype=jnp.int32)
+        self.coef_in = jnp.asarray(chem.coef_in)
+        self.coef_out = jnp.asarray(chem.coef_out)
 
+        self.k = nnx.Param(k_init)
+
+    def __call__(self, t, y):
+        RO2 = jnp.sum(y[self.RO2_IDX])
+        rate = self.k * jnp.prod(y[:, None] ** self.coef_in, axis=0)
+        rate = rate.at[self.RO2_K_IDX].multiply(RO2)
+        dc_dt  = self.coef_out @ rate
+        return dc_dt
+
+class NeuralODE(nnx.Module):
+    def __init__(self, ode: Callable):
+        super().__init__()
+        self.ode = ode
+
+    def _rhs(self, t, y, args):
+        return self.ode(t, y)
+
+    def __call__(self, ts, y0):
         sol = diffrax.diffeqsolve(
-            diffrax.ODETerm(_batched_rhs),
-            self.stiff_solver,
-            t0=time[0],
-            t1=time[-1],
+            diffrax.ODETerm(self._rhs),
+            diffrax.Kvaerno3(),
+            t0=ts[0],
+            t1=ts[-1],
             dt0=0.0002,
-            y0=init_conc,
-            saveat=diffrax.SaveAt(ts=time),
-            adjoint=self.adjoint,
+            y0=y0,
+            saveat=diffrax.SaveAt(ts=ts),
+            adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=8192),
             max_steps=8192,
             throw=False,
-            stepsize_controller=self.adaptive_step_crtl,
+            stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-7),
         )
-        # set EQX_ON_ERROR=nan to stop runtime error
-        # if sol.result != diffrax.RESULTS.successful:
-        #     jax.debug.print("rt error, fall back to fix-step method")
-        # sol = diffrax.diffeqsolve(
-        #     diffrax.ODETerm(_batched_rhs),
-        #     self.euler_solver,
-        #     t0=time[0],
-        #     t1=time[-1],
-        #     dt0=0.1,
-        #     y0=init_conc,  # [B, dim]
-        #     saveat=diffrax.SaveAt(ts=time),
-        #     adjoint=self.adjoint,
-        #     max_steps=8192,
-        #     stepsize_controller=self.fix_step_crtl,
-        # )
-        ret = rearrange(sol.ys, 't b s -> b t s') #.clip(min=1e-30)
-
-        return ret  # shape: [B, T, ...]
-
-    def get_k(self, *args, **kargs):
-        return self.ode.get_k(*args, **kargs)
+        return sol.ys
