@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# usage: see `python nnrr-jax.py --help`
+# usage: see `python train_coll.py --help`
 
 # # Neural Reaction Network
 

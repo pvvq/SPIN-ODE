@@ -284,8 +284,8 @@ class POLLU(ChemistryScheme):
             u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]
             if rand:
                 u0 *= self.rng.uniform(0.99, 1.01, size=u0.shape)  # rand by 0.1
-            # t = np.linspace(0, 0.1, num=100)
-            t = np.array([1,60])
+            t = np.linspace(0, 0.1, num=100)
+            # t = np.array([1,60])
             sol = solve_ivp(fun=self.rate_ode, t_span=(0, t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
             y_list.append(sol.y.transpose(1, 0))
             t_list.append(t)

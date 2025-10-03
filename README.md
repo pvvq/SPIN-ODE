@@ -21,25 +21,25 @@ Robertson and POLLU dataset are simulated by the Scipy BDF stiff ODE solver. AOX
 
 ## Run
 There are two training scripts:
-- [`nnrr-jax.py`](nnrr-jax.py): neural ODE training, where the network is coupled with ODE solver to integrate and fit concentration trajectory.
-- [`nnrr-jax-coll.py`](nnrr-jax-coll.py): pre-training, where network is trained on estimated time derivative.
+- [`train_ode.py`](train_ode.py): neural ODE training, where the network is coupled with ODE solver to integrate and fit concentration trajectory.
+- [`train_coll.py`](train_coll.py): pre-training, where network is trained on estimated time derivative.
 
 All features/hyper-parameters are controlled by `yaml` config files. Examples are provided in [`config/`](config) folder. Each script is for one experiment setup, in which there are `yaml` target for different dataset and training steps.
 
-Additionally, a few command line parameters are used to choose script and target, as well as switch for logging. See `python nnrr-jax.py --help` for details.
+Additionally, a few command line parameters are used to choose script and target, as well as switch for logging. See `python train_ode.py --help` for details.
 
 **All the commands we use** are provided in the [`slurm.sh`](slurm.sh), itself is also useful to run SPIN-ODE on HPC with SLURM scheduling system.
 
 For example, the full 3-step approach described in our paper on the Robertson dataset:
 ```shell
 # step 1: train MLP to fit nODE traj
-python nnrr-jax.py --config configs/spin.yaml --target rober_fit
+python train_ode.py --config configs/spin.yaml --target rober_fit
 
 # step 2: train CRNN with deriv from interpolated traj inferenced by MLP
-python nnrr-jax-coll.py --config configs/spin.yaml --target rober_coll
+python train_coll.py --config configs/spin.yaml --target rober_coll
 
 # step 3: fine-tune on CRNN with estimated rate coefficient
-python nnrr-jax.py --config configs/spin.yaml --target rober_tune
+python train_ode.py --config configs/spin.yaml --target rober_tune
 ```
 
 ## Acknowledgements

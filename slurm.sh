@@ -32,56 +32,56 @@ echo "==================================="
 
 # proposed approach
 ## step 1: train MLP to fit nODE traj
-# python nnrr-jax.py --config configs/spin.yaml --target rober_fit
-# python nnrr-jax.py --config configs/spin.yaml --target pollu_fit
-# python nnrr-jax.py --config configs/spin.yaml --target toy_fit
+# python train_ode.py --config configs/spin.yaml --target rober_fit
+# python train_ode.py --config configs/spin.yaml --target pollu_fit
+# python train_ode.py --config configs/spin.yaml --target toy_fit
 
 ## step 2: train CRNN with deriv from interpolated traj inferenced by MLP
-# python nnrr-jax-coll.py --config configs/spin.yaml --target rober_coll
-# python nnrr-jax-coll.py --config configs/spin.yaml --target pollu_coll
-# python nnrr-jax-coll.py --config configs/spin.yaml --target toy_coll
+# python train_coll.py --config configs/spin.yaml --target rober_coll
+# python train_coll.py --config configs/spin.yaml --target pollu_coll
+# python train_coll.py --config configs/spin.yaml --target toy_coll
 
 ## step : fine-tune on CRNN with estimated rate coefficient
-# python nnrr-jax.py --config configs/spin.yaml --target rober_tune
-# python nnrr-jax.py --config configs/spin.yaml --target pollu_tune
-# python nnrr-jax.py --config configs/spin.yaml --target toy_tune
+# python train_ode.py --config configs/spin.yaml --target rober_tune
+# python train_ode.py --config configs/spin.yaml --target pollu_tune
+# python train_ode.py --config configs/spin.yaml --target toy_tune
 
 ##################################
 # Baseline: directly fit CRNN on traj with ODESolver
-# python nnrr-jax.py --config configs/crnn_ode.yaml --target rober
-# python nnrr-jax.py --config configs/crnn_ode.yaml --target pollu
-# python nnrr-jax.py --config configs/crnn_ode.yaml --target toy
+# python train_ode.py --config configs/crnn_ode.yaml --target rober
+# python train_ode.py --config configs/crnn_ode.yaml --target pollu
+# python train_ode.py --config configs/crnn_ode.yaml --target toy
 
 ##################################
 # Ablation
 # w/o diff: train CRNN with deriv learned from MLP
-# python nnrr-jax-coll.py --config configs/coll_mlpoutput.yaml --target rober_coll
-# python nnrr-jax-coll.py --config configs/coll_mlpoutput.yaml --target pollu_coll
-# python nnrr-jax-coll.py --config configs/coll_mlpoutput.yaml --target toy_coll
+# python train_coll.py --config configs/coll_mlpoutput.yaml --target rober_coll
+# python train_coll.py --config configs/coll_mlpoutput.yaml --target pollu_coll
+# python train_coll.py --config configs/coll_mlpoutput.yaml --target toy_coll
 
 # w/o interpolation: train CRNN with deriv from origin traj
-# python nnrr-jax-coll.py --config configs/coll_difforigin.yaml --target rober
-# python nnrr-jax-coll.py --config configs/coll_difforigin.yaml --target pollu
-# python nnrr-jax-coll.py --config configs/coll_difforigin.yaml --target toy
+# python train_coll.py --config configs/coll_difforigin.yaml --target rober
+# python train_coll.py --config configs/coll_difforigin.yaml --target pollu
+# python train_coll.py --config configs/coll_difforigin.yaml --target toy
 
 # w/o physical loss
 ## step 1: train MLP to fit nODE traj
-# python nnrr-jax.py --config configs/spin_phyloss.yaml --target rober_fit
-# python nnrr-jax.py --config configs/spin_phyloss.yaml --target pollu_fit
-# python nnrr-jax.py --config configs/spin_phyloss.yaml --target toy_fit
+# python train_ode.py --config configs/spin_phyloss.yaml --target rober_fit
+# python train_ode.py --config configs/spin_phyloss.yaml --target pollu_fit
+# python train_ode.py --config configs/spin_phyloss.yaml --target toy_fit
 
 ## step 2: train CRNN with deriv from interpolated traj inferenced by MLP
-# python nnrr-jax-coll.py --config configs/spin_phyloss.yaml --target rober_coll
-# python nnrr-jax-coll.py --config configs/spin_phyloss.yaml --target pollu_coll
-# python nnrr-jax-coll.py --config configs/spin_phyloss.yaml --target toy_coll
+# python train_coll.py --config configs/spin_phyloss.yaml --target rober_coll
+# python train_coll.py --config configs/spin_phyloss.yaml --target pollu_coll
+# python train_coll.py --config configs/spin_phyloss.yaml --target toy_coll
 
 # Stiffness
 
 # Toy sample points
-# python nnrr-jax.py --config configs/spin_reduce.yaml --target rober_fit
-# python nnrr-jax.py --config configs/spin_reduce.yaml --target pollu_fit
-# python nnrr-jax.py --config configs/spin_reduce.yaml --target toy_fit
+# python train_ode.py --config configs/spin_reduce.yaml --target rober_fit
+# python train_ode.py --config configs/spin_reduce.yaml --target pollu_fit
+# python train_ode.py --config configs/spin_reduce.yaml --target toy_fit
 
-# python nnrr-jax-coll.py --config configs/spin_reduce.yaml --target rober_coll
-# python nnrr-jax-coll.py --config configs/spin_reduce.yaml --target pollu_coll
-# python nnrr-jax-coll.py --config configs/spin_reduce.yaml --target toy_coll
+# python train_coll.py --config configs/spin_reduce.yaml --target rober_coll
+# python train_coll.py --config configs/spin_reduce.yaml --target pollu_coll
+# python train_coll.py --config configs/spin_reduce.yaml --target toy_coll
