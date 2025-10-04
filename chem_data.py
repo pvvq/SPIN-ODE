@@ -169,14 +169,14 @@ class ChemistryScheme():
         self.spc_names, self.reactions_text, self.reactions_id, self.rconst_text, self.rconst = self.parse_scheme(scheme_id)
         self.num_spc = len(self.spc_names)
         self.num_react = len(self.reactions_id)
-        self.coef_in, self.coef_out = self.get_react_coef()
+        self.stoi_reac, self.stoi_prod = self.get_stoichiometric_coef()
 
         # seperate too large rate constant
         if scheme_id == "toy_44" and SORT_RATE:
             sort_order = np.argsort(self.rconst)
             self.rconst = self.rconst[sort_order]
-            self.coef_out = self.coef_out[:, sort_order]
-            self.coef_in = self.coef_in[:, sort_order]
+            self.stoi_prod = self.stoi_prod[:, sort_order]
+            self.stoi_reac = self.stoi_reac[:, sort_order]
             self.RO2_K_IDX = [list(sort_order).index(idx) for idx in self.RO2_K_IDX]
 
     def parse_scheme(self, scheme_id):
@@ -238,22 +238,21 @@ class ChemistryScheme():
             reactions_id.append([reactants_id, products_id, rate])
         return species, reactions_text, reactions_id, rconst_text, np.array(rconst)
 
-    def get_react_coef(self):
-        coef_in = np.zeros([self.num_spc, self.num_react])  # reaction order
-        coef_out = np.zeros([self.num_spc, self.num_react])  # stoichiometrix
+    def get_stoichiometric_coef(self):
+        stoi_reac = np.zeros([self.num_spc, self.num_react])  # reaction order
+        stoi_prod = np.zeros([self.num_spc, self.num_react])  # stoichiometrix
         for i, (reactants, products, _) in enumerate(self.reactions_id):
             for reactant in reactants:
-                coef_in[reactant][i] += 1
-                coef_out[reactant][i] -= 1
+                stoi_reac[reactant][i] += 1
             for product in products:
-                coef_out[product][i] += 1
-        return coef_in, coef_out
+                stoi_prod[product][i] += 1
+        return stoi_reac, stoi_prod
     
     def rate_ode(self, t, y):
         RO2 = np.sum(y[self.RO2_IDX])
-        rate = self.rconst * np.prod(y[:, None] ** self.coef_in, axis=0)
+        rate = self.rconst * np.prod(y[:, None] ** self.stoi_reac, axis=0)
         rate[self.RO2_K_IDX] *= RO2
-        dc_dt  = self.coef_out @ rate
+        dc_dt  = (self.stoi_prod - self.stoi_reac) @ rate
         return dc_dt
 
 
@@ -466,7 +465,11 @@ if __name__ == "__main__":
 
     # Regression test for jax rate law and solver ==============================
     import network as nt
-    rate_law = nt.LogRateLaw(chem, k_init=jnp.asarray(chem.rconst))
-    solver = nt.NeuralODE(rate_law)
+    rate_law = nt.LogRateLaw(
+        chem.stoi_reac, chem.stoi_prod,
+        chem.RO2_IDX, chem.RO2_K_IDX,
+        k_init=chem.rconst
+    )
+    solver = nt.Solverax(rate_law)
     y = solver(t_arr[0], y_arr[0][0])
     print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))

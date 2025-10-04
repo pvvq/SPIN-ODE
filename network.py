@@ -2,10 +2,10 @@ from typing import Callable
 
 import jax
 import jax.numpy as jnp
+from jax.typing import ArrayLike
 from flax import nnx
 import diffrax
 
-from chem_data import ChemistryScheme
 
 def SMSPELoss(pred, truth):
     """Symmetric Mean Squared Percentage Error"""
@@ -104,47 +104,92 @@ class ScaleMLP(nnx.Module):
 
 
 class PowerRateLaw(nnx.Module):
-    def __init__(self, chem: ChemistryScheme, k_init: jax.Array):
+    def __init__(
+            self,
+            stoi_reac: ArrayLike,
+            stoi_prod: ArrayLike,
+            RO2_IDX: ArrayLike,
+            RO2_K_IDX: ArrayLike,
+            k_init: ArrayLike,
+        ):
+        """
+        Args:
+            stoi_reat: reactant stoichiometric coefficients
+            stoi_prod: product stoichiometric coefficients,
+            RO2_IDX: index of RO2 species,
+            RO2_K_IDX: index of RO2-dependent rate coefficients,
+            k_init: initial rate coefficients (learnable),
+        """
         super().__init__()
-
-        self.RO2_IDX = jnp.asarray(chem.RO2_IDX, dtype=jnp.int32)
-        self.RO2_K_IDX = jnp.asarray(chem.RO2_K_IDX, dtype=jnp.int32)
-        self.coef_in = jnp.asarray(chem.coef_in)
-        self.coef_out = jnp.asarray(chem.coef_out)
+        
+        self.stoi_reat = jnp.asarray(stoi_reac)
+        self.stoi_net = jnp.asarray(stoi_prod - stoi_reac)
+        self.RO2_IDX = jnp.asarray(RO2_IDX, dtype=jnp.int32)
+        self.RO2_K_IDX = jnp.asarray(RO2_K_IDX, dtype=jnp.int32)
 
         self.log_k = nnx.Param(jnp.log(jnp.asarray(k_init)))
 
-    def __call__(self, t, y):
-        rate = jnp.exp(self.log_k.value) * jnp.prod(y[:, None] ** self.coef_in, axis=0)
+    def __call__(self, t: jax.Array, y: jax.Array) -> jax.Array:
+        """
+        Args:
+            t: current time
+            y: current concentration vector
+        Returns:
+            time derivative of concentrations
+        """
+        rate = jnp.exp(self.log_k.value) * jnp.prod(y[:, None] ** self.stoi_reat, axis=0)
         
         RO2 = jnp.sum(y[self.RO2_IDX])
         rate = rate.at[self.RO2_K_IDX].multiply(RO2)
         
-        dy_dt  = self.coef_out @ rate
+        dy_dt  = self.stoi_net @ rate
         return dy_dt
     
 class LogRateLaw(nnx.Module):
-    def __init__(self, chem: ChemistryScheme, k_init: jax.Array):
+    def __init__(
+            self,
+            stoi_reac: ArrayLike,
+            stoi_prod: ArrayLike,
+            RO2_IDX: ArrayLike,
+            RO2_K_IDX: ArrayLike,
+            k_init: ArrayLike,
+        ):
+        """
+        Args:
+            stoi_reat: reactant stoichiometric coefficients
+            stoi_prod: product stoichiometric coefficients,
+            RO2_IDX: index of RO2 species,
+            RO2_K_IDX: index of RO2-dependent rate coefficients,
+            k_init: initial rate coefficients (learnable),
+        """
         super().__init__()
-
-        self.RO2_IDX = jnp.asarray(chem.RO2_IDX, dtype=jnp.int32)
-        self.RO2_K_IDX = jnp.asarray(chem.RO2_K_IDX, dtype=jnp.int32)
-        self.coef_in = jnp.asarray(chem.coef_in)
-        self.coef_out = jnp.asarray(chem.coef_out)
+        
+        self.stoi_reat = jnp.asarray(stoi_reac)
+        self.stoi_net = jnp.asarray(stoi_prod - stoi_reac)
+        self.RO2_IDX = jnp.asarray(RO2_IDX, dtype=jnp.int32)
+        self.RO2_K_IDX = jnp.asarray(RO2_K_IDX, dtype=jnp.int32)
 
         self.log_k = nnx.Param(jnp.log(jnp.asarray(k_init)))
 
-    def __call__(self, t, y):
+    def __call__(self, t: jax.Array, y: jax.Array) -> jax.Array:
+        """
+        Args:
+            t: current time
+            y: current concentration vector
+        Returns:
+            time derivative of concentrations
+        """
         log_y = jnp.log(jnp.clip(y, 1e-30, 1e30))
-        rate = jnp.exp(self.log_k.value) * jnp.exp(log_y @ self.coef_in)
+        rate = jnp.exp(self.log_k.value) * jnp.exp(log_y @ self.stoi_reat)
         
         RO2 = jnp.sum(y[self.RO2_IDX])
         rate = rate.at[self.RO2_K_IDX].multiply(RO2)
 
-        dy_dt = self.coef_out @ rate
+        dy_dt = self.stoi_net @ rate
         return dy_dt
 
-class NeuralODE(nnx.Module):
+class Solverax(nnx.Module):
+    """Wrapper of diffrax ODE solver"""
     def __init__(self, ode: Callable):
         super().__init__()
         self.ode = ode
@@ -152,7 +197,14 @@ class NeuralODE(nnx.Module):
     def _rhs(self, t, y, args):
         return self.ode(t, y)
 
-    def __call__(self, ts, y0):
+    def __call__(self, ts: jax.Array, y0: jax.Array) -> jax.Array:
+        """
+        Args:
+            ts: time span
+            y0: initial state
+        Returns:
+            solved states in saveat time
+        """
         sol = diffrax.diffeqsolve(
             diffrax.ODETerm(self._rhs),
             diffrax.Kvaerno3(),
