@@ -466,7 +466,7 @@ if __name__ == "__main__":
 
     # Regression test for jax rate law and solver ==============================
     import network as nt
-    rate_law = nt.PowerRateLaw(chem, k_init=chem.rconst)
+    rate_law = nt.LogRateLaw(chem, k_init=jnp.asarray(chem.rconst))
     solver = nt.NeuralODE(rate_law)
     y = solver(t_arr[0], y_arr[0][0])
     print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))

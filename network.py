@@ -102,45 +102,6 @@ class ScaleMLP(nnx.Module):
         dcdt = dcdt * self.ytscale.value
         return dcdt
 
-    def get_k(self, *args, **kargs):
-        return None
-
-class CRNN(nnx.Module):
-    def __init__(self, num_spc, num_react, coef_in, coef_out, RO2_IDX=None, RO2_K_IDX=None, k=None):
-        super().__init__()
-        self.num_spc = num_spc
-        self.num_react = num_react
-
-        if k is None:
-            key = jax.random.key(42)
-            k = jnp.exp(jax.random.normal(key, (self.num_react)))
-
-        self.ln_k = nnx.Param(jnp.log(k).reshape(-1, 1))
-
-        self.coef_in = Var(jnp.array(coef_in))
-        self.coef_out = Var(jnp.array(coef_out))
-        self.RO2_IDX = Var(jnp.array(RO2_IDX)) if RO2_IDX is not None else None
-        self.RO2_K_IDX = Var(jnp.array(RO2_K_IDX)) if RO2_K_IDX is not None else None
-
-    def __call__(self, t, x):
-        # x: [B, n_spc]
-        x = jnp.clip(x, 1e-30, 1e30)
-
-        poly = self.coef_in.value.T @ jnp.log(x).reshape(-1, self.num_spc, 1)  # [B, n_react, 1]
-
-        if self.RO2_IDX is not None:  # for toy-44 only, get sum of RO2 species
-            RO2_val = x[:, self.RO2_IDX.value].sum(axis=1, keepdims=True).reshape(-1,1,1)  # [B,1,1]
-            RO2_mat = jnp.zeros((x.shape[0], self.num_react, 1))
-            RO2_mat = RO2_mat.at[:, self.RO2_K_IDX.value, :].set(jnp.log(RO2_val))  # [B, n_react, 1]
-            poly += RO2_mat  # RO2-dependent rate for toy-44
-
-        rate = jnp.exp(jnp.expand_dims(self.ln_k.value, 0).repeat(x.shape[0], axis=0) + poly)  # [B, n_react, 1]
-        x_out = self.coef_out.value @ rate  # [B, n_spc, 1]
-
-        return jnp.squeeze(x_out)  # [B, n_spc]
-
-    def get_k(self, *args, **kargs):
-        return jnp.exp(self.ln_k).reshape(-1)
 
 class PowerRateLaw(nnx.Module):
     def __init__(self, chem: ChemistryScheme, k_init: jax.Array):
@@ -151,14 +112,37 @@ class PowerRateLaw(nnx.Module):
         self.coef_in = jnp.asarray(chem.coef_in)
         self.coef_out = jnp.asarray(chem.coef_out)
 
-        self.k = nnx.Param(k_init)
+        self.log_k = nnx.Param(jnp.log(jnp.asarray(k_init)))
 
     def __call__(self, t, y):
+        rate = jnp.exp(self.log_k.value) * jnp.prod(y[:, None] ** self.coef_in, axis=0)
+        
         RO2 = jnp.sum(y[self.RO2_IDX])
-        rate = self.k * jnp.prod(y[:, None] ** self.coef_in, axis=0)
         rate = rate.at[self.RO2_K_IDX].multiply(RO2)
-        dc_dt  = self.coef_out @ rate
-        return dc_dt
+        
+        dy_dt  = self.coef_out @ rate
+        return dy_dt
+    
+class LogRateLaw(nnx.Module):
+    def __init__(self, chem: ChemistryScheme, k_init: jax.Array):
+        super().__init__()
+
+        self.RO2_IDX = jnp.asarray(chem.RO2_IDX, dtype=jnp.int32)
+        self.RO2_K_IDX = jnp.asarray(chem.RO2_K_IDX, dtype=jnp.int32)
+        self.coef_in = jnp.asarray(chem.coef_in)
+        self.coef_out = jnp.asarray(chem.coef_out)
+
+        self.log_k = nnx.Param(jnp.log(jnp.asarray(k_init)))
+
+    def __call__(self, t, y):
+        log_y = jnp.log(jnp.clip(y, 1e-30, 1e30))
+        rate = jnp.exp(self.log_k.value) * jnp.exp(log_y @ self.coef_in)
+        
+        RO2 = jnp.sum(y[self.RO2_IDX])
+        rate = rate.at[self.RO2_K_IDX].multiply(RO2)
+
+        dy_dt = self.coef_out @ rate
+        return dy_dt
 
 class NeuralODE(nnx.Module):
     def __init__(self, ode: Callable):
