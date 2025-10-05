@@ -36,55 +36,34 @@ def ScaleMAELoss(pred, truth, yscale):
     return jnp.mean(jnp.abs(scaled_diff))
 
 def TVLoss1D(x, scale, window_size=1):
-    # x: [B, t, s]
-    diff = x[:, window_size:, :] - x[:, :-window_size, :]
+    diff = x[window_size:, ...] - x[:-window_size, ...]
     tv = jnp.square(diff)
 
     loss = jnp.mean(tv / scale)
     return loss
 
-def gradient(x: jnp.ndarray, t: jnp.ndarray = None) -> jnp.ndarray:
-    """
-    Compute finite difference gradient along time axis (dim=1) for x of shape [B, T, D].
-    If t is None, assumes uniform spacing of 1.0 along time.
-    
-    Args:
-        x: Tensor of shape [B, T, D]
-        t: Optional 1D array of shape [T]; if None, assumes t = [0, 1, ..., T-1]
-    Returns:
-        Gradient dx/dt of shape [B, T, D]
-    """
-    B, T, D = x.shape
-    if t is None:
-        t = jnp.arange(T, dtype=x.dtype)
-
-    def grad_single_batch(xi):  # xi: [T, D]
-        grad = jnp.zeros_like(xi)
-
-        # Forward difference at start
-        grad = grad.at[0].set((xi[1] - xi[0]) / (t[1] - t[0]))
-
-        # Backward difference at end
-        grad = grad.at[-1].set((xi[-1] - xi[-2]) / (t[-1] - t[-2]))
-
-        # Central difference for interior
-        dt = t[2:] - t[:-2]          # [T-2]
-        dx = xi[2:] - xi[:-2]        # [T-2, D]
-        grad = grad.at[1:-1].set(dx / dt[:, None])
-
-        return grad
-
-    return jax.vmap(grad_single_batch)(x)  # apply across batch dimension
-
 
 class Var(nnx.Variable):
+    """Non-trainable variable"""
     pass
 
 class ScaleMLP(nnx.Module):
-    def __init__(self, num_spc, num_react, scale, hidden_size=32, *, rngs: nnx.Rngs):
+    def __init__(
+            self,
+            num_spc: int,
+            scale: dict[str, ArrayLike],
+            hidden_size: int = 32,
+            *,
+            rngs: nnx.Rngs
+        ):
+        """
+        Args:
+            num_spc: number of species
+            scale: dict of concentration and time scales
+            hidden_size: hidden layer size
+        """
         super().__init__()
         self.num_spc = num_spc
-        self.num_react = num_react
 
         self.linear1 = nnx.Linear(self.num_spc, hidden_size, rngs=rngs)
         self.linear2 = nnx.Linear(hidden_size, hidden_size, rngs=rngs)
@@ -94,7 +73,7 @@ class ScaleMLP(nnx.Module):
         self.yscale = Var(scale['yScale'])
         self.ytscale = Var(scale['ytScale'])
 
-    def __call__(self, t, c):
+    def __call__(self, t: jax.Array, c: jax.Array) -> jax.Array:
         c = (c - self.yMin.value) / self.yscale.value
         x = nnx.gelu(self.linear1(c))
         x = nnx.gelu(self.linear2(x))
@@ -110,7 +89,7 @@ class PowerRateLaw(nnx.Module):
             stoi_prod: ArrayLike,
             RO2_IDX: ArrayLike,
             RO2_K_IDX: ArrayLike,
-            k_init: ArrayLike,
+            k: ArrayLike,
         ):
         """
         Args:
@@ -118,16 +97,16 @@ class PowerRateLaw(nnx.Module):
             stoi_prod: product stoichiometric coefficients,
             RO2_IDX: index of RO2 species,
             RO2_K_IDX: index of RO2-dependent rate coefficients,
-            k_init: initial rate coefficients (learnable),
+            k: rate coefficients (learnable),
         """
         super().__init__()
         
-        self.stoi_reat = jnp.asarray(stoi_reac)
-        self.stoi_net = jnp.asarray(stoi_prod - stoi_reac)
-        self.RO2_IDX = jnp.asarray(RO2_IDX, dtype=jnp.int32)
-        self.RO2_K_IDX = jnp.asarray(RO2_K_IDX, dtype=jnp.int32)
+        self.stoi_reat = Var(jnp.asarray(stoi_reac))
+        self.stoi_net = Var(jnp.asarray(stoi_prod - stoi_reac))
+        self.RO2_IDX = Var(jnp.asarray(RO2_IDX, dtype=jnp.int32))
+        self.RO2_K_IDX = Var(jnp.asarray(RO2_K_IDX, dtype=jnp.int32))
 
-        self.log_k = nnx.Param(jnp.log(jnp.asarray(k_init)))
+        self.log_k = nnx.Param(jnp.log(jnp.asarray(k)))
 
     def __call__(self, t: jax.Array, y: jax.Array) -> jax.Array:
         """
@@ -137,12 +116,12 @@ class PowerRateLaw(nnx.Module):
         Returns:
             time derivative of concentrations
         """
-        rate = jnp.exp(self.log_k.value) * jnp.prod(y[:, None] ** self.stoi_reat, axis=0)
+        rate = jnp.exp(self.log_k.value) * jnp.prod(y[:, None] ** self.stoi_reat.value, axis=0)
         
-        RO2 = jnp.sum(y[self.RO2_IDX])
-        rate = rate.at[self.RO2_K_IDX].multiply(RO2)
+        RO2 = jnp.sum(y[self.RO2_IDX.value])
+        rate = rate.at[self.RO2_K_IDX.value].multiply(RO2)
         
-        dy_dt  = self.stoi_net @ rate
+        dy_dt  = self.stoi_net.value @ rate
         return dy_dt
     
 class LogRateLaw(nnx.Module):
@@ -152,7 +131,7 @@ class LogRateLaw(nnx.Module):
             stoi_prod: ArrayLike,
             RO2_IDX: ArrayLike,
             RO2_K_IDX: ArrayLike,
-            k_init: ArrayLike,
+            k: ArrayLike,
         ):
         """
         Args:
@@ -160,16 +139,16 @@ class LogRateLaw(nnx.Module):
             stoi_prod: product stoichiometric coefficients,
             RO2_IDX: index of RO2 species,
             RO2_K_IDX: index of RO2-dependent rate coefficients,
-            k_init: initial rate coefficients (learnable),
+            k: rate coefficients (learnable),
         """
         super().__init__()
         
-        self.stoi_reat = jnp.asarray(stoi_reac)
-        self.stoi_net = jnp.asarray(stoi_prod - stoi_reac)
-        self.RO2_IDX = jnp.asarray(RO2_IDX, dtype=jnp.int32)
-        self.RO2_K_IDX = jnp.asarray(RO2_K_IDX, dtype=jnp.int32)
+        self.stoi_reat = Var(jnp.asarray(stoi_reac))
+        self.stoi_net = Var(jnp.asarray(stoi_prod - stoi_reac))
+        self.RO2_IDX = Var(jnp.asarray(RO2_IDX, dtype=jnp.int32))
+        self.RO2_K_IDX = Var(jnp.asarray(RO2_K_IDX, dtype=jnp.int32))
 
-        self.log_k = nnx.Param(jnp.log(jnp.asarray(k_init)))
+        self.log_k = nnx.Param(jnp.log(jnp.asarray(k)))
 
     def __call__(self, t: jax.Array, y: jax.Array) -> jax.Array:
         """
@@ -180,12 +159,12 @@ class LogRateLaw(nnx.Module):
             time derivative of concentrations
         """
         log_y = jnp.log(jnp.clip(y, 1e-30, 1e30))
-        rate = jnp.exp(self.log_k.value) * jnp.exp(log_y @ self.stoi_reat)
+        rate = jnp.exp(self.log_k.value) * jnp.exp(log_y @ self.stoi_reat.value)
         
-        RO2 = jnp.sum(y[self.RO2_IDX])
-        rate = rate.at[self.RO2_K_IDX].multiply(RO2)
+        RO2 = jnp.sum(y[self.RO2_IDX.value])
+        rate = rate.at[self.RO2_K_IDX.value].multiply(RO2)
 
-        dy_dt = self.stoi_net @ rate
+        dy_dt = self.stoi_net.value @ rate
         return dy_dt
 
 class Solverax(nnx.Module):
@@ -210,7 +189,7 @@ class Solverax(nnx.Module):
             diffrax.Kvaerno3(),
             t0=ts[0],
             t1=ts[-1],
-            dt0=0.0002,
+            dt0=None,
             y0=y0,
             saveat=diffrax.SaveAt(ts=ts),
             adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=8192),

@@ -5,6 +5,8 @@
 
 # # Neural Reaction Network
 
+from typing import Callable
+
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -90,35 +92,23 @@ yt_dataloader.dataset.rand_sample()
 
 # Model ========================================================================
 
+# Instantiate the model.
+if config['ODE'] == "ScaleMLP":
+    ode = nt.ScaleMLP(
+        chem.num_spc, scale,
+        hidden_size=128, rngs=nnx.Rngs(0),
+    )
+elif config['ODE'] == "LogRateLaw":
+    ode = nt.LogRateLaw(
+        chem.stoi_reac, chem.stoi_prod,
+        chem.RO2_IDX, chem.RO2_K_IDX,
+        k=chem.rconst
+    )
+
 if config['restore']:
-    if config['nODE'] == "ScaleMLP":
-        empty_ode = nt.ScaleMLP(
-            chem.num_spc, chem.num_react, scale,
-            hidden_size=128, rngs=nnx.Rngs(0),
-        )
-    elif config['nODE'] == "CRNN":
-        empty_ode = nt.CRNN(
-            chem.num_spc, chem.num_react,
-            chem.coef_in, chem.coef_out,
-            chem.RO2_IDX, chem.RO2_K_IDX,
-            # k=guess_k
-        )
-    restored_ode = train_utils.restore_ckpt(config, empty_ode)
-    model = nt.NeuralODE(restored_ode)
-else:
-    # Instantiate the model.
-    if config['nODE'] == "ScaleMLP":
-        ode = nt.ScaleMLP(
-            chem.num_spc, chem.num_react, scale,
-            hidden_size=128, rngs=nnx.Rngs(0),
-        )
-    elif config['nODE'] == "CRNN":
-        ode = nt.CRNN(
-            chem.num_spc, chem.num_react,
-            chem.coef_in, chem.coef_out,
-            chem.RO2_IDX, chem.RO2_K_IDX,
-        )
-    model = nt.NeuralODE(ode)
+    ode = train_utils.restore_ckpt(config, ode)
+
+model = nt.Solverax(ode)
 
 if config['chem'] == "pollu" and config['restore'] is not None:
     # OH cycling rate coefficients are provided as they are well studied to help network converge
@@ -136,9 +126,8 @@ if config['chem'] == "pollu" and config['restore'] is not None:
     model.ode.ln_k.value = model.ode.ln_k.value.at[14:19].set(jnp.log(jnp.array(guess_k[14:19]).reshape(-1,1)))
     print(model.ode.get_k(), nt.LogMAELoss(model.ode.get_k(), jnp.array(chem.rconst)))
 
-crnn_true = nt.CRNN(
-    chem.num_spc, chem.num_react,
-    chem.coef_in, chem.coef_out,
+truth_rate_ode = nt.LogRateLaw(
+    chem.stoi_reac, chem.stoi_prod,
     chem.RO2_IDX, chem.RO2_K_IDX,
     k=chem.rconst
 )
@@ -153,26 +142,22 @@ optimizer = nnx.Optimizer(
 
 # Training =====================================================================
 
-def forward(model, batch):
-    init_conc = batch['conc'][:,0,:]
-    t = batch['time'][0]  # use shared time stamp
-    return model(init_conc, t)
-
-def loss_fn(model, batch):
-    pred_y = forward(model, batch)
+def loss_fn(model: Callable, conc: jax.Array, t: jax.Array) -> jax.Array:
+    pred_y = model(t, conc[0,:])
+    
     loss_func = nt.ScaleMSELoss
-    loss = loss_func(pred_y[:,1:,:], batch['conc'][:,1:,:], jnp.array(scale['yScale']))
-    grad_1st = nt.gradient(pred_y)
-    grad_2nd = nt.gradient(grad_1st)
+    loss = loss_func(pred_y[1:,:], conc[1:,:], jnp.asarray(scale['yScale']))
+    grad_1st = jnp.gradient(pred_y, t, axis=0)
+    grad_2nd = jnp.gradient(grad_1st, t, axis=0)
     if config['phy_loss'] and 'grad_sim' in config['phy_loss']:
         loss_grad1st = loss_func(
             grad_1st,
-            nt.gradient(batch['conc']),
-            jnp.array(scale['dyScale'])
+            jnp.gradient(conc, t, axis=0),
+            jnp.asarray(scale['dyScale'])
         )
         loss_grad2nd = loss_func(
             grad_2nd,
-            nt.gradient(nt.gradient(batch['conc'])),
+            jnp.gradient(jnp.gradient(conc), t, axis=0),
             jnp.array(scale['ddyScale'])
         )
         alpha = config['phy_loss']['grad_sim']['alpha']
@@ -184,11 +169,20 @@ def loss_fn(model, batch):
         loss += nt.TVLoss1D(grad_2nd, jnp.array(scale['ddyScale']), window_size) * alpha
     return loss
 
-@nnx.jit  # automatic state management for JAX transforms
+def batch_loss_fn(
+        model: Callable,
+        batch: dict[str, jax.Array],
+    ):
+    batch_loss = nnx.vmap(
+        loss_fn, in_axes=(None, 0, 0), out_axes=0,
+    )(model, batch['conc'], batch['time'])
+    return jnp.mean(batch_loss)
+
+@nnx.jit
 def train_step(model, optimizer, batch):
-    grad_fn = nnx.value_and_grad(loss_fn)
+    grad_fn = nnx.value_and_grad(batch_loss_fn)
     loss, grads = grad_fn(model, batch)
-    optimizer.update(grads, value=loss)  # in-place updates
+    optimizer.update(grads, value=loss)
     return loss
 
 def eval_k(model, batch, step, logger):
@@ -209,9 +203,10 @@ def eval_y(model, batch, step, logger):
     logger.add_scalar('val_err_y', np.asarray(err_y), step)
     plt.close(fig)
 
-def eval_dy(ode, crnn_true, traj, step, logger):
+def eval_dy(ode, batch, step, logger):
+    traj = last_traj
     ode_dcdt = ode(traj['time'], traj['conc'])
-    true_dcdt = crnn_true(traj['time'], traj['conc'])
+    true_dcdt = truth_rate_ode(traj['time'], traj['conc'])
     err_dy = nt.ScaleMSELoss(ode_dcdt, true_dcdt, scale['dyScale'])
     fig = pp.plot_series(ode_dcdt, true_dcdt)
     logger.add_figure('pred_true_dy', fig, step)
@@ -219,16 +214,17 @@ def eval_dy(ode, crnn_true, traj, step, logger):
     plt.close(fig)
 
 def val_step(model, val_dataloader, step, logger):
-    if isinstance(model.ode, nt.CRNN):
-        eval_k(model, None, step, logger)
-    eval_y(model, next(iter(val_dataloader)), step, logger)
-    eval_dy(model.ode, crnn_true, last_traj, step, logger)
+    pass
+    # if isinstance(model.ode, nt.LogRateLaw):
+    #     eval_k(model, None, step, logger)
+    # eval_y(model, next(iter(val_dataloader)), step, logger)
+    # eval_dy(model.ode, None, step, logger)
 
 logger, checkpointer = train_utils.build_logging(config)
 train_utils.train_loop(
     model, optimizer,
     train_dataloader=yt_dataloader, val_dataloader=yt_val_dataloader,
-    train_step=train_step, val_step = val_step,
+    train_step=train_step, val_step=val_step,
     logger=logger, checkpointer=checkpointer,
     config=config,
 )

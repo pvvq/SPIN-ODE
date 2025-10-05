@@ -25,7 +25,7 @@ defaults: &defaults
   
   # model
   restore: null  # restore from ckpt
-  nODE: CRNN  # init which model as neural ODE
+  ODE: LogRateLaw  # init which model as ODE
   phy_loss:
     alpha: 0.1
 

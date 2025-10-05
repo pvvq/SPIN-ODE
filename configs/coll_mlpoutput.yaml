@@ -25,7 +25,7 @@ defaults_fit: &defaults_fit
   
   # model
   restore: null  # restore from ckpt
-  nODE: ScaleMLP  # init which model as neural ODE
+  ODE: ScaleMLP  # init which model as ODE
   phy_loss:
     alpha: 0.1
 
@@ -86,7 +86,7 @@ defaults_coll: &defaults_coll
   
   # model
   restore: null  # restore from ckpt
-  nODE: ScaleMLP  # init which model as neural ODE
+  ODE: ScaleMLP  # init which model as ODE
   phy_loss: null
 
 rober_coll:

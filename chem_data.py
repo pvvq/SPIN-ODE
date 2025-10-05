@@ -275,7 +275,7 @@ class POLLU(ChemistryScheme):
         super().__init__(scheme_id="pollu")
         self.rng = np.random.RandomState(42)
 
-    def data(self, num_series, rand=False):
+    def data(self, num_series, rand=False, t=None):
         y_list, t_list = [], []
         for i in range(num_series):
             # Initial conditions
@@ -283,8 +283,8 @@ class POLLU(ChemistryScheme):
             u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]
             if rand:
                 u0 *= self.rng.uniform(0.99, 1.01, size=u0.shape)  # rand by 0.1
-            # t = np.linspace(0, 0.1, num=100)
-            t = np.array([1,60])
+            if t is None:
+                t = np.linspace(0, 0.1, num=100)
             sol = solve_ivp(fun=self.rate_ode, t_span=(0, t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
             y_list.append(sol.y.transpose(1, 0))
             t_list.append(t)
@@ -449,7 +449,7 @@ if __name__ == "__main__":
     # fig.savefig("plots/pollu.png", dpi=300)
 
     chem = POLLU()
-    y_arr, t_arr = chem.data(1)
+    y_arr, t_arr = chem.data(1, t=np.array([1,60]))
     print(y_arr[0].shape)
     
     # from Verwer, 1994
@@ -468,7 +468,7 @@ if __name__ == "__main__":
     rate_law = nt.LogRateLaw(
         chem.stoi_reac, chem.stoi_prod,
         chem.RO2_IDX, chem.RO2_K_IDX,
-        k_init=chem.rconst
+        k=chem.rconst
     )
     solver = nt.Solverax(rate_law)
     y = solver(t_arr[0], y_arr[0][0])
