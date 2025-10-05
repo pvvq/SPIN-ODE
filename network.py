@@ -119,10 +119,14 @@ class PowerRateLaw(nnx.Module):
         rate = jnp.exp(self.log_k.value) * jnp.prod(y[:, None] ** self.stoi_reat.value, axis=0)
         
         RO2 = jnp.sum(y[self.RO2_IDX.value])
-        rate = rate.at[self.RO2_K_IDX.value].multiply(RO2)
+        rate = rate.at[self.RO2_K_IDX.value].multiply(RO2, unique_indices=True)
         
         dy_dt  = self.stoi_net.value @ rate
         return dy_dt
+    
+    def get_k(self) -> jax.Array:
+        """Returns learnable rate coefficients"""
+        return jnp.exp(self.log_k.value)
     
 class LogRateLaw(nnx.Module):
     def __init__(
@@ -162,10 +166,14 @@ class LogRateLaw(nnx.Module):
         rate = jnp.exp(self.log_k.value) * jnp.exp(log_y @ self.stoi_reat.value)
         
         RO2 = jnp.sum(y[self.RO2_IDX.value])
-        rate = rate.at[self.RO2_K_IDX.value].multiply(RO2)
+        rate = rate.at[self.RO2_K_IDX.value].multiply(RO2, unique_indices=True)
 
         dy_dt = self.stoi_net.value @ rate
         return dy_dt
+    
+    def get_k(self) -> jax.Array:
+        """Returns learnable rate coefficients"""
+        return jnp.exp(self.log_k.value)
 
 class Solverax(nnx.Module):
     """Wrapper of diffrax ODE solver"""

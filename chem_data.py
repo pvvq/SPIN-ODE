@@ -428,7 +428,7 @@ def numpy_collate(batch):
     return jax.tree_util.tree_map(np.asarray, default_collate(batch))
 
 def jax_collate(batch):
-    return jax.tree_util.tree_map(jnp.array, default_collate(batch))
+    return jax.tree_util.tree_map(jnp.asarray, default_collate(batch))
 
 if __name__ == "__main__":
     # Regression test for scheme simulator =====================================

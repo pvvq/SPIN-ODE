@@ -100,7 +100,6 @@ def train_loop(
         checkpointer: ocp.CheckpointManager | DummyCheckpointer,
         config: dict,
     ):
-    err_k = None
     n_step = 0
     bar = tqdm(range(0, config['n_epochs']), desc=f"Epoch", initial=0)
     for epoch in bar:
@@ -114,10 +113,11 @@ def train_loop(
 
             n_step += 1
         mean_loss /= len(train_dataloader)
+        logger.add_scalar('loss', np.asarray(mean_loss), epoch)
 
         # evaluation
         model.eval()
-        if (epoch + 1) % config['val_interval'] == 0:
+        if (epoch) % config['val_interval'] == 0:
             val_step(model, val_dataloader, epoch, logger)
 
         # checkpointing
@@ -130,5 +130,4 @@ def train_loop(
 
         bar.set_postfix({
             'loss': f"{np.asarray(mean_loss):.4e}",
-            'err_k': f"{np.asarray(err_k):.4e}" if err_k is not None else None,
         })
