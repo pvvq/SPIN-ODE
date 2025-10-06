@@ -439,37 +439,37 @@ if __name__ == "__main__":
     # y_arr, t_arr = chem.data(10)
     # print(y_arr.shape)
 
-    # from plots.plot import plot_series
-    # chem = ROBER()
-    # y_arr, t_arr = chem.data(1)
-    # fig = plot_series(y_arr[0], t=t_arr[0])
-    # for ax in fig.axes:
-    #     ax.set_xscale("log")
-    # Path("plots").mkdir(parents=True, exist_ok=True)
-    # fig.savefig("plots/pollu.png", dpi=300)
+    from plots.plot import plot_series
+    chem = ROBER()
+    y_arr, t_arr = chem.data(1)
+    fig = plot_series(y_arr[0], t=t_arr[0], grid=(1,3))
+    for ax in fig.axes:
+        ax.set_xscale("log")
+    Path("plots").mkdir(parents=True, exist_ok=True)
+    fig.savefig("plots/rober.png", dpi=300)
 
-    chem = POLLU()
-    y_arr, t_arr = chem.data(1, t=np.array([1,60]))
-    print(y_arr[0].shape)
+    # chem = POLLU()
+    # y_arr, t_arr = chem.data(1, t=np.array([1,60]))
+    # print(y_arr[0].shape)
     
-    # from Verwer, 1994
-    true_end_conc_text = """
-    5.64625548e-02 1.34248413e-01 4.13973433e-09 5.52314021e-03
-    2.01897726e-07 1.46454186e-07 7.78424912e-02 3.24507535e-01
-    7.49401338e-03 1.62229316e-08 1.13586383e-08 2.23050598e-03
-    2.08716288e-04 1.39692102e-05 8.96488486e-03 4.35284637e-18
-    6.89921970e-03 1.00780304e-04 1.77214651e-06 5.68294329e-05
-    """
-    true_end_conc = np.fromstring(true_end_conc_text, sep=' ')
-    print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
+    # # from Verwer, 1994
+    # true_end_conc_text = """
+    # 5.64625548e-02 1.34248413e-01 4.13973433e-09 5.52314021e-03
+    # 2.01897726e-07 1.46454186e-07 7.78424912e-02 3.24507535e-01
+    # 7.49401338e-03 1.62229316e-08 1.13586383e-08 2.23050598e-03
+    # 2.08716288e-04 1.39692102e-05 8.96488486e-03 4.35284637e-18
+    # 6.89921970e-03 1.00780304e-04 1.77214651e-06 5.68294329e-05
+    # """
+    # true_end_conc = np.fromstring(true_end_conc_text, sep=' ')
+    # print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
 
-    # Regression test for jax rate law and solver ==============================
-    import network as nt
-    rate_law = nt.LogRateLaw(
-        chem.stoi_reac, chem.stoi_prod,
-        chem.RO2_IDX, chem.RO2_K_IDX,
-        k=chem.rconst
-    )
-    solver = nt.Solverax(rate_law)
-    y = solver(t_arr[0], y_arr[0][0])
-    print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))
+    # # Regression test for jax rate law and solver ==============================
+    # import network as nt
+    # rate_law = nt.LogRateLaw(
+    #     chem.stoi_reac, chem.stoi_prod,
+    #     chem.RO2_IDX, chem.RO2_K_IDX,
+    #     k=chem.rconst
+    # )
+    # solver = nt.Solverax(rate_law)
+    # y = solver(t_arr[0], y_arr[0][0])
+    # print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))

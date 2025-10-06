@@ -1,34 +1,60 @@
 import numpy as np
+import numpy.typing as npt
 import matplotlib.pyplot as plt
 
 
-def plot_series(traj, observe=None, t=None, t2=None, fig=None):
+def plot_series(
+        y: npt.NDArray,
+        t = None,
+        yy: npt.NDArray = None,
+        tt = None,
+        fig = None,
+        grid: tuple = None,
+    ):
     """
-    observe: [n_step, n_spc]
-    traj: [n_step, n_spc]
+    Args:
+        y: [n_step, n_spc]
+        t: [n_step]
+        yy: [n_step, n_spc]
+        tt: [n_step]
+        fig: plot on top of existing fig
+        grid: (rows, cols) of axes
     """
-    n_species = traj.shape[1]
-    cols = np.ceil(np.sqrt(n_species)).astype(int)
-    rows = np.ceil(n_species / cols).astype(int)
-    if fig is None: fig, ax = plt.subplots(
-        rows, cols, figsize=(cols * 2, rows * 2),
-        squeeze=False, layout='constrained',sharex=True
-    )
+    n_species = y.shape[-1]
+    if grid:
+        rows, cols = grid
     else:
-        ax = np.array(fig.axes).reshape(rows, cols)
-    if observe is not None:
-        observe = observe.transpose(1,0)
-    traj = traj.transpose(1,0)
-    if t is None: t = range(traj.shape[1])
-    if t2 is None and observe is not None: t2 = range(observe.shape[1])
+        cols = np.ceil(np.sqrt(n_species)).astype(int)
+        rows = np.ceil(n_species / cols).astype(int)
+    if fig is None: 
+        fig, axes = plt.subplots(
+            rows, cols, figsize=(cols * 2, rows * 2),
+            squeeze=False, layout='constrained',
+            sharex=True,
+        )
+    else:
+        axes = np.array(fig.axes).reshape(rows, cols)
+    
+    y = y.transpose(1,0)
+    if yy is not None:
+        yy = yy.transpose(1,0)
+    if t is None: t = range(y.shape[1])
+    if tt is None and yy is not None: tt = range(yy.shape[1])
+
     for i in range(n_species):
-        ax[i%rows][i//rows].plot(t, traj[i])
-        if observe is not None:
-            ax[i%rows][i//rows].scatter(t2, observe[i],
-                                        facecolors='none', edgecolors='black',
-                                        s=10, linewidth=0.3)
-        ax[i%rows][i//rows].set_title(i+1, fontsize='small', loc='left')
-    # fig.savefig(f"{id}.png", dpi=300)
+        ax = axes[i//cols][i%cols]
+        ax.plot(t, y[i])
+        if yy is not None:
+            ax.scatter(
+                tt, yy[i],
+                facecolors='none', edgecolors='black',
+                s=10, linewidth=0.3
+            )
+        ax.set_title(i+1, fontsize='small', loc='left')
+        
+    fig.supxlabel("t")
+    fig.supylabel("y", rotation=0)
+
     return fig
 
 
