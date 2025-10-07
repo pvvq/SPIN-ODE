@@ -175,34 +175,41 @@ class LogRateLaw(nnx.Module):
         """Returns learnable rate coefficients"""
         return jnp.exp(self.log_k.value)
 
-class Solverax(nnx.Module):
-    """Wrapper of diffrax ODE solver"""
-    def __init__(self, ode: Callable):
-        super().__init__()
-        self.ode = ode
-
-    def _rhs(self, t, y, args):
-        return self.ode(t, y)
-
-    def __call__(self, ts: jax.Array, y0: jax.Array) -> jax.Array:
-        """
-        Args:
-            ts: time span
-            y0: initial state
-        Returns:
-            solved states in saveat time
-        """
+def ode_solver(
+        *,
+        solver = diffrax.Kvaerno3(),
+        dt0 = None,
+        adjoint = diffrax.RecursiveCheckpointAdjoint(checkpoints=8192),
+        max_steps: int = 8192,
+        stepsize_controller = diffrax.PIDController(rtol=1e-6, atol=1e-7),
+        throw: bool = False,
+    ) -> Callable[[Callable, jax.Array, jax.Array], jax.Array]:
+    """
+    Args:
+        ode: ode function
+        ts: time span
+        y0: initial state
+    Returns:
+        solved states in saveat time
+    """
+    def ode_solve(
+            ode: Callable,
+            ts: jax.Array, 
+            y0: jax.Array,
+        ) -> jax.Array:
         sol = diffrax.diffeqsolve(
-            diffrax.ODETerm(self._rhs),
-            diffrax.Kvaerno3(),
+            diffrax.ODETerm(lambda t, y, args: ode(t, y)),
+            solver,
             t0=ts[0],
             t1=ts[-1],
-            dt0=None,
             y0=y0,
             saveat=diffrax.SaveAt(ts=ts),
-            adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=8192),
-            max_steps=8192,
-            throw=False,
-            stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-7),
+            dt0=dt0,
+            adjoint=adjoint,
+            max_steps=max_steps,
+            stepsize_controller=stepsize_controller,
+            throw=throw,
         )
         return sol.ys
+    
+    return ode_solve

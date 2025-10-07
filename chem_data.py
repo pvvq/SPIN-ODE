@@ -470,6 +470,6 @@ if __name__ == "__main__":
         chem.RO2_IDX, chem.RO2_K_IDX,
         k=chem.rconst
     )
-    solver = nt.Solverax(rate_law)
-    y = solver(t_arr[0], y_arr[0][0])
+    solver = nt.ode_solver()
+    y = solver(rate_law, t_arr[0], y_arr[0][0])
     print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))

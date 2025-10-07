@@ -90,7 +90,7 @@ yt_dataloader.dataset.rand_sample()
 
 # Model ========================================================================
 
-# Instantiate the model.
+# Instantiate the ODE.
 if config['ODE'] == "ScaleMLP":
     ode = nt.ScaleMLP(
         chem.num_spc, scale,
@@ -102,10 +102,9 @@ elif config['ODE'] == "LogRateLaw":
         chem.RO2_IDX, chem.RO2_K_IDX,
         k=chem.rconst
     )
-model = nt.Solverax(ode)
 
 if config['restore']:
-    model = train_utils.restore_ckpt(config, model)
+    ode = train_utils.restore_ckpt(config, ode)
 
 if config['chem'] == "pollu" and config['restore'] is not None:
     # OH cycling rate coefficients are provided as they are well studied to help network converge
@@ -118,10 +117,10 @@ if config['chem'] == "pollu" and config['restore'] is not None:
         .444e12,  # 19. O1D -> O3P
     ]
     guess_k = pollu_k_OH
-    print(model.ode.get_k(), nt.LogMAELoss(model.ode.get_k(), jnp.asarray(chem.rconst)))
+    print(ode.get_k(), nt.LogMAELoss(ode.get_k(), jnp.asarray(chem.rconst)))
     print("init OH", guess_k[14:19])
-    model.ode.ln_k.value = model.ode.ln_k.value.at[14:19].set(jnp.log(jnp.asarray(guess_k[14:19]).reshape(-1,1)))
-    print(model.ode.get_k(), nt.LogMAELoss(model.ode.get_k(), jnp.asarray(chem.rconst)))
+    ode.ln_k.value = ode.ln_k.value.at[14:19].set(jnp.log(jnp.asarray(guess_k[14:19]).reshape(-1,1)))
+    print(ode.get_k(), nt.LogMAELoss(ode.get_k(), jnp.asarray(chem.rconst)))
 
 true_rate_ode = nt.LogRateLaw(
     chem.stoi_reac, chem.stoi_prod,
@@ -130,7 +129,7 @@ true_rate_ode = nt.LogRateLaw(
 )
 
 optimizer = nnx.Optimizer(
-    model,
+    ode,
     optax.chain(
         optax.adam(config['learning_rate']),
         optax.contrib.reduce_on_plateau(patience=config['n_epochs']*0.1*len(yt_dataloader))
@@ -140,8 +139,10 @@ optimizer = nnx.Optimizer(
 
 # Training =====================================================================
 
-def loss_fn(model: Callable, conc: jax.Array, t: jax.Array) -> jax.Array:
-    pred_y = model(t, conc[0,:])
+solver = nt.ode_solver()
+
+def loss_fn(ode: Callable, conc: jax.Array, t: jax.Array) -> jax.Array:
+    pred_y = solver(ode, t, conc[0,:])
     
     loss_func = nt.ScaleMSELoss
     loss = loss_func(pred_y[1:,:], conc[1:,:], jnp.asarray(scale['yScale']))
@@ -168,23 +169,23 @@ def loss_fn(model: Callable, conc: jax.Array, t: jax.Array) -> jax.Array:
     return loss
 
 def batch_loss_fn(
-        model: Callable,
+        ode: Callable,
         batch: dict[str, jax.Array],
     ):
     batch_loss = nnx.vmap(
         loss_fn, in_axes=(None, 0, 0), out_axes=0,
-    )(model, batch['conc'], batch['time'])
+    )(ode, batch['conc'], batch['time'])
     return jnp.mean(batch_loss)
 
 @nnx.jit
-def train_step(model, optimizer, batch):
+def train_step(ode, optimizer, batch):
     grad_fn = nnx.value_and_grad(batch_loss_fn)
-    loss, grads = grad_fn(model, batch)
+    loss, grads = grad_fn(ode, batch)
     optimizer.update(grads, value=loss)
     return loss
 
-def eval_k(model, batch, step, logger):
-    pred_k = model.ode.get_k()
+def eval_k(ode, batch, step, logger):
+    pred_k = ode.get_k()
     true_k = jnp.asarray(chem.rconst)
     err_k = nt.LogMAELoss(pred_k, true_k)
     fig = pp.plot_k([jax.device_get(pred_k), chem.rconst],["pred_k", "true_k"], chem.num_react)
@@ -193,40 +194,40 @@ def eval_k(model, batch, step, logger):
     logger.add_scalar('val_err_k', np.asarray(err_k), step)
     plt.close(fig)
 
-def eval_y(model, batch, step, logger):
+def eval_y(ode, batch, step, logger):
     sample = last_traj
-    pred_y = model(sample['time'], sample['conc'][0])
+    pred_y = solver(ode, sample['time'], sample['conc'][0])
     err_y = nt.ScaleMSELoss(pred_y, sample['conc'], scale['yScale'])
-    fig = pp.plot_series(pred_y, sample['conc'])
+    fig = pp.plot_series(y=pred_y, yy=sample['conc'])
     logger.add_figure('pred_true_y', fig, step)
     logger.add_scalar('val_err_y', np.asarray(err_y), step)
     plt.close(fig)
 
-def eval_dy(model, batch, step, logger):
+def eval_dy(ode, batch, step, logger):
     sample = last_traj
     def batch_ode(ode):
         return nnx.vmap(
             lambda t, c: ode(t, c),
             in_axes=(0, 0), out_axes=0,
         )
-    ode_dcdt = batch_ode(model.ode)(sample['time'], sample['conc'])
+    ode_dcdt = batch_ode(ode)(sample['time'], sample['conc'])
     true_dcdt = batch_ode(true_rate_ode)(sample['time'], sample['conc'])
     err_dy = nt.ScaleMSELoss(ode_dcdt, true_dcdt, scale['dyScale'])
     print("err_dy", err_dy)
-    fig = pp.plot_series(ode_dcdt, true_dcdt)
+    fig = pp.plot_series(y=ode_dcdt, yy=true_dcdt)
     logger.add_figure('pred_true_dy', fig, step)
     logger.add_scalar('val_err_dy', np.asarray(err_dy), step)
     plt.close(fig)
 
-def val_step(model, val_dataloader, step, logger):
-    if isinstance(model.ode, nt.LogRateLaw) or isinstance(model.ode, nt.PowerRateLaw):
-        eval_k(model, None, step, logger)
-    eval_y(model, None, step, logger)
-    eval_dy(model, None, step, logger)
+def val_step(ode, val_dataloader, step, logger):
+    if isinstance(ode, nt.LogRateLaw) or isinstance(ode, nt.PowerRateLaw):
+        eval_k(ode, None, step, logger)
+    eval_y(ode, None, step, logger)
+    eval_dy(ode, None, step, logger)
 
 logger, checkpointer = train_utils.build_logging(config)
 train_utils.train_loop(
-    model, optimizer,
+    ode, optimizer,
     train_dataloader=yt_dataloader, val_dataloader=yt_val_dataloader,
     train_step=train_step, val_step=val_step,
     logger=logger, checkpointer=checkpointer,
