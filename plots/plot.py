@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 
 
 def plot_series(
-        y: npt.NDArray,
+        y: npt.ArrayLike,
         t = None,
-        yy: npt.NDArray = None,
+        yy: npt.ArrayLike = None,
         tt = None,
         fig = None,
         grid: tuple = None,

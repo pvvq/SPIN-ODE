@@ -5,6 +5,7 @@
 # usage: see `python train_ode.py --help`
 
 from typing import Callable
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import torch
@@ -184,40 +185,54 @@ def train_step(ode, optimizer, batch):
     optimizer.update(grads, value=loss)
     return loss
 
+async_worker = ThreadPoolExecutor(max_workers=8)
+
 def eval_k(ode, batch, step, logger):
     pred_k = ode.get_k()
     true_k = jnp.asarray(chem.rconst)
     err_k = nt.LogMAELoss(pred_k, true_k)
-    fig = pp.plot_k([jax.device_get(pred_k), chem.rconst],["pred_k", "true_k"], chem.num_react)
-    logger.add_figure('pred_true_k', fig, step)
-    logger.add_text('pred_k', jnp.array_str(pred_k), step)
-    logger.add_scalar('val_err_k', np.asarray(err_k), step)
-    plt.close(fig)
+    
+    pred_k, err_k = np.asarray(pred_k), np.asarray(err_k)
+    def _plot():
+        fig = pp.plot_k([pred_k, chem.rconst],["pred_k", "true_k"], chem.num_react)
+        logger.add_figure('pred_true_k', fig, step)
+        logger.add_text('pred_k', np.array2string(pred_k), step)
+        logger.add_scalar('val_err_k', err_k, step)
+        plt.close(fig)
+    async_worker.submit(_plot)
 
 def eval_y(ode, batch, step, logger):
     sample = last_traj
-    pred_y = solver(ode, sample['time'], sample['conc'][0])
+    jitted_solver = jax.jit(solver, static_argnames="ode")
+    pred_y = jitted_solver(ode, sample['time'], sample['conc'][0])
     err_y = nt.ScaleMSELoss(pred_y, sample['conc'], scale['yScale'])
-    fig = pp.plot_series(y=pred_y, yy=sample['conc'])
-    logger.add_figure('pred_true_y', fig, step)
-    logger.add_scalar('val_err_y', np.asarray(err_y), step)
-    plt.close(fig)
+    
+    pred_y, true_y, err_y = np.asarray(pred_y), np.asarray(sample['conc']), np.asarray(err_y)
+    def _plot():
+        fig = pp.plot_series(y=pred_y, yy=true_y)
+        logger.add_figure('pred_true_y', fig, step)
+        logger.add_scalar('val_err_y', err_y, step)
+        plt.close(fig)
+    async_worker.submit(_plot)
 
 def eval_dy(ode, batch, step, logger):
     sample = last_traj
     def batch_ode(ode):
-        return nnx.vmap(
+        return nnx.jit(nnx.vmap(
             lambda t, c: ode(t, c),
             in_axes=(0, 0), out_axes=0,
-        )
+        ))
     ode_dcdt = batch_ode(ode)(sample['time'], sample['conc'])
     true_dcdt = batch_ode(true_rate_ode)(sample['time'], sample['conc'])
     err_dy = nt.ScaleMSELoss(ode_dcdt, true_dcdt, scale['dyScale'])
-    print("err_dy", err_dy)
-    fig = pp.plot_series(y=ode_dcdt, yy=true_dcdt)
-    logger.add_figure('pred_true_dy', fig, step)
-    logger.add_scalar('val_err_dy', np.asarray(err_dy), step)
-    plt.close(fig)
+
+    ode_dcdt, true_dcdt, err_dy = np.asarray(ode_dcdt), np.asarray(true_dcdt), np.asarray(err_dy)
+    def _plot():
+        fig = pp.plot_series(y=ode_dcdt, yy=true_dcdt)
+        logger.add_figure('pred_true_dy', fig, step)
+        logger.add_scalar('val_err_dy', err_dy, step)
+        plt.close(fig)
+    async_worker.submit(_plot)
 
 def val_step(ode, val_dataloader, step, logger):
     if isinstance(ode, nt.LogRateLaw) or isinstance(ode, nt.PowerRateLaw):

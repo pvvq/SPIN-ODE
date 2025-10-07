@@ -101,7 +101,7 @@ def train_loop(
         config: dict,
     ):
     n_step = 0
-    bar = tqdm(range(0, config['n_epochs']), desc=f"Epoch", initial=0)
+    bar = tqdm(range(0, config['n_epochs']), desc=f"Epochs", initial=0)
     for epoch in bar:
         # === train ===
         model.train()
@@ -116,8 +116,8 @@ def train_loop(
         logger.add_scalar('loss', np.asarray(mean_loss), epoch)
 
         # evaluation
-        model.eval()
         if (epoch) % config['val_interval'] == 0:
+            model.eval()
             val_step(model, val_dataloader, epoch, logger)
 
         # checkpointing
