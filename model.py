@@ -20,14 +20,7 @@ def forward(params: dict, inputs: dict):
 
     def ode(t, y, args):
         """time derivative of model state"""
-        k = args['k']
-        stoi_reac, stoi_prod = args['stoi_reac'], args['stoi_prod']
-        
-        dy_dt = ch.power_rate_law(
-            y, k,
-            ch.Stoichiometry(stoi_reac, stoi_prod),
-        )
-        
+        dy_dt = ch.power_rate_law(y, args['k'], args["stoichiometry"])
         return dy_dt
 
     ts = inputs['ts']
@@ -59,8 +52,7 @@ if __name__ == "__main__":
 
     params = {
         'k': K,
-        'stoi_reac': stoi_reac,
-        'stoi_prod': stoi_prod,
+        'stoichiometry': ch.Stoichiometry(stoi_reac, stoi_prod),
     }
     inputs = {
         'ts': ts,

@@ -465,39 +465,19 @@ if __name__ == "__main__":
     print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
 
     # Regression test for jax rate law and solver ==============================
-    import equinox as eqx
-    import diffrax
-
     import chemistry as ch
+    import model
 
-    stoi = ch.Stoichiometry(
-        sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
-    )
-    k = jnp.asarray(sch.rconst)
+    params = {
+        'k': jnp.asarray(sch.rconst),
+        'stoichiometry': ch.Stoichiometry(
+            sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
+        ),
+    }
+    inputs = {
+        'y0': jnp.asarray(y_arr[0][0]),
+        'ts': jnp.asarray(t_arr[0]),
+    }
+    ys = model.forward(params, inputs)
 
-    def ode(t, y, args):
-        k, stoi = args
-        return ch.log_rate_law(y, k, stoi)
-    
-    ts = jnp.asarray(t_arr[0])
-    y0 = jnp.asarray(y_arr[0][0])
-
-    eqx.tree_pprint(stoi, short_arrays=False)
-    print(k, ts, y0)
-
-    sol = diffrax.diffeqsolve(
-        diffrax.ODETerm(ode),
-        diffrax.Kvaerno5(),
-        t0=ts[0],
-        t1=ts[-1],
-        y0=y0,
-        saveat=diffrax.SaveAt(ts=ts),
-        dt0=None,
-        # adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=8192),
-        max_steps=8192,
-        stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-7),
-        throw=True,
-        args=(k, stoi),
-    )
-    print(len(sol.ys))
-    print("Jax Regression test: ", jnp.allclose(sol.ys[-1], jnp.asarray(true_end_conc)))
+    print("Jax Regression test: ", jnp.allclose(ys[-1], jnp.asarray(true_end_conc)))
