@@ -2,9 +2,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, default_collate
 from scipy.integrate import solve_ivp
-from torch.utils.data import default_collate
 import jax
 import jax.numpy as jnp
 
@@ -294,7 +293,7 @@ class TOY(ChemistryScheme):
     def __init__(self):
         super().__init__(scheme_id="toy_44")
 
-    def _data_solveivp(self, num_series, rand=False):
+    def _data_solveivp(self, num_series, rand=False, t=None):
         y_list, t_list = [], []
         for i in range(num_series):
             # Initial conditions
@@ -305,7 +304,8 @@ class TOY(ChemistryScheme):
                     u0[self.spc_names.index(spc_name.strip())] = float(init_val)
             if rand:
                 u0 *= self.rng.uniform_(0.99, 1.01, size=u0.shape)  # rand by 0.1
-            t = np.arange(101)
+            if t is None:
+                t = np.arange(101)
             sol = solve_ivp(fun=self.rate_ode, t_span=(t[0], t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
             y_list.append(sol.y.transpose(1, 0))
             t_list.append(t)
@@ -431,25 +431,26 @@ def jax_collate(batch):
     return jax.tree_util.tree_map(jnp.asarray, default_collate(batch))
 
 if __name__ == "__main__":
+    jax.config.update("jax_enable_x64", True)
     # Regression test for scheme simulator =====================================
-    # chem = TOY()
-    # y_arr, t_arr = chem._data_solveivp(1)
-    # true_toy_44_conc, _ = chem._data_csv("data_t100_dt1_10/toy_44.csv")
+    # sch = TOY()
+    # y_arr, t_arr = sch._data_solveivp(1)
+    # true_toy_44_conc, _ = sch._data_csv("data_t100_dt1_10/toy_44.csv")
     # print("TOY Regression test: ", np.allclose(y_arr[0][-1], true_toy_44_conc[-1], rtol=1e-3))
-    # y_arr, t_arr = chem.data(10)
+    # y_arr, t_arr = sch.data(10)
     # print(y_arr.shape)
 
     # from plots.plot import plot_series
-    # chem = ROBER()
-    # y_arr, t_arr = chem.data(1)
+    # sch = ROBER()
+    # y_arr, t_arr = sch.data(1)
     # fig = plot_series(y_arr[0], t=t_arr[0], grid=(1,3))
     # for ax in fig.axes:
     #     ax.set_xscale("log")
     # Path("plots").mkdir(parents=True, exist_ok=True)
     # fig.savefig("plots/rober.png", dpi=300)
 
-    chem = POLLU()
-    y_arr, t_arr = chem.data(1, t=np.array([0,1,60]))
+    sch = POLLU()
+    y_arr, t_arr = sch.data(1, t=np.array([0,1,60]))
     print(y_arr[0].shape)
     
     # from Verwer, 1994
@@ -464,12 +465,39 @@ if __name__ == "__main__":
     print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
 
     # Regression test for jax rate law and solver ==============================
-    import network as nt
-    rate_law = nt.LogRateLaw(
-        chem.stoi_reac, chem.stoi_prod,
-        chem.RO2_IDX, chem.RO2_K_IDX,
-        k=chem.rconst
+    import equinox as eqx
+    import diffrax
+
+    import chemistry as ch
+
+    stoi = ch.Stoichiometry(
+        sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
     )
-    solver = nt.ode_solver()
-    y = solver(rate_law, t_arr[0], y_arr[0][0])
-    print("Jax Regression test: ", jnp.allclose(y[-1], jnp.asarray(true_end_conc)))
+    k = jnp.asarray(sch.rconst)
+
+    def ode(t, y, args):
+        k, stoi = args
+        return ch.log_rate_law(y, k, stoi)
+    
+    ts = jnp.asarray(t_arr[0])
+    y0 = jnp.asarray(y_arr[0][0])
+
+    eqx.tree_pprint(stoi, short_arrays=False)
+    print(k, ts, y0)
+
+    sol = diffrax.diffeqsolve(
+        diffrax.ODETerm(ode),
+        diffrax.Kvaerno5(),
+        t0=ts[0],
+        t1=ts[-1],
+        y0=y0,
+        saveat=diffrax.SaveAt(ts=ts),
+        dt0=None,
+        # adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=8192),
+        max_steps=8192,
+        stepsize_controller=diffrax.PIDController(rtol=1e-6, atol=1e-7),
+        throw=True,
+        args=(k, stoi),
+    )
+    print(len(sol.ys))
+    print("Jax Regression test: ", jnp.allclose(sol.ys[-1], jnp.asarray(true_end_conc)))
