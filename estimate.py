@@ -1,6 +1,8 @@
 import jax
 import jax.numpy as jnp
+import jaxtyping
 import equinox as eqx
+import optax
 import tqdm
 
 import chemistry as ch
@@ -36,28 +38,37 @@ def loss_fn(estimated_params, fixed_params, inputs, y_ture):
     return mse(traj_pred, y_ture)
 
 @eqx.filter_jit
-def opt_step(estimated_params, fixed_params, inputs, y_ture, learning_rate):
+def opt_step(
+        optim: optax.GradientTransformation, opt_state: jaxtyping.PyTree,
+        estimated_params, fixed_params, inputs,
+        y_ture
+    ):
     loss_val, grads = eqx.filter_value_and_grad(loss_fn)(
         estimated_params, fixed_params, inputs, y_ture
     )
+    updates, opt_state = optim.update(grads, opt_state)
     new_estimated_params = eqx.apply_updates(
-        estimated_params, jax.tree.map(lambda g: -learning_rate * g, grads)
+        estimated_params, updates
     )
-    return new_estimated_params, loss_val
+    return new_estimated_params, loss_val, opt_state
 
 
 est_params['k'] = K * 0.1
-learning_rate = 1e5
-epoch = 1000
+LEARNING_RATE = 1e5
+EPOCHS = 1000
+
+optimizer = optax.sgd(LEARNING_RATE)
+opt_state = optimizer.init(est_params)
 
 print(f"ground truth: K={K}")
 print(f"before optimisation: {est_params}")
-bar = tqdm.tqdm(range(0, epoch), desc=f"Epochs", initial=0)
+bar = tqdm.tqdm(range(0, EPOCHS), desc=f"Epochs", initial=0)
 
 for i in bar:
-    est_params, loss_val = opt_step(
+    est_params, loss_val, opt_state = opt_step(
+        optimizer, opt_state,
         est_params, fix_params, inputs,
-        y_ture, learning_rate,
+        y_ture
     )
     bar.set_postfix({'k0': f"{float(jnp.squeeze(est_params['k'])):.4e}"})
 
