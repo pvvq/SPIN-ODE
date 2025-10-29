@@ -7,27 +7,38 @@ import tqdm
 
 import chemistry as ch
 import model
+import chem_data as cm
 
-
-# NO+O3 -> NO2: 0.266 * 10^2
-stoi_reac=jnp.asarray([[1,1,0]]).T  # reaction stoichiometric matrix
-stoi_prod=jnp.asarray([[0,0,1]]).T  # product stoichiometric matrix
-K = jnp.asarray([0.266e2])          # reaction rate coefficient
-ts = jnp.arange(0, 1, 0.1)          # time span
-y0 = jnp.asarray([0.2, 0.04, 0])    # initial concentration
+sch = cm.POLLU()
 
 est_params = {
-    'k': K,
+    'k': sch.rconst,
 }
 fix_params = {
-    'stoichiometry': ch.Stoichiometry(stoi_reac, stoi_prod),
+    'stoichiometry': ch.Stoichiometry(
+        sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
+    ),
+    'solver': {
+        'rtol': 1e-3,
+        'atol': 1e-4,
+        'max_steps': 8192,
+    },
 }
+init_conc = jnp.zeros(20)
+init_conc = init_conc.at[jnp.asarray([1,3,6,7,8,16])].set([0.2, 0.04, 0.1, 0.3, 0.01, 0.007])
 inputs = {
-    'ts': ts,
-    'y0': y0,
+    'ts': jnp.linspace(0,0.1,10),
+    'y0': init_conc,
 }
 
 y_ture = model.forward({**est_params, **fix_params}, inputs)
+
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(4, 5, figsize=(10,8), layout='constrained')
+for i in range(sch.num_spc):
+    row, col = i // 5, i % 5
+    axes[row][col].plot(inputs['ts'], y_ture[:,i])
+fig.savefig("plots/pollu_traj.png", dpi=300)
 
 def mse(prediction, target):
     return jnp.mean((prediction - target) ** 2)
@@ -53,14 +64,14 @@ def opt_step(
     return new_estimated_params, loss_val, opt_state
 
 
-est_params['k'] = K * 0.1
-LEARNING_RATE = 1e5
-EPOCHS = 1000
+print(f"ground truth: K={est_params['k']}")
+est_params['k'][4] = est_params['k'][4] * 0.9
+LEARNING_RATE = 1e1
+EPOCHS = 100
 
 optimizer = optax.sgd(LEARNING_RATE)
 opt_state = optimizer.init(est_params)
 
-print(f"ground truth: K={K}")
 print(f"before optimisation: {est_params}")
 bar = tqdm.tqdm(range(0, EPOCHS), desc=f"Epochs", initial=0)
 
@@ -70,6 +81,8 @@ for i in bar:
         est_params, fix_params, inputs,
         y_ture
     )
-    bar.set_postfix({'k0': f"{float(jnp.squeeze(est_params['k'])):.4e}"})
+    bar.set_postfix({
+        'loss': f"{float(jnp.squeeze(loss_val)):.4e}",
+    })
 
 print(f"after optimisation: {est_params}")

@@ -25,20 +25,23 @@ def forward(params: dict, inputs: dict):
 
     ts = inputs['ts']
     y0 = inputs['y0']
+    solver_cfg = params['solver']
 
     sol = dfx.diffeqsolve(
-            dfx.ODETerm(ode),
-            dfx.Kvaerno5(),
-            t0=ts[0],
-            t1=ts[-1],
-            y0=y0,
-            saveat=dfx.SaveAt(ts=ts),
-            dt0=None,
-            max_steps=8192,
-            stepsize_controller=dfx.PIDController(rtol=1e-6, atol=1e-7),
-            throw=True,
-            args=params,
-        )
+        dfx.ODETerm(ode),
+        dfx.Kvaerno5(),
+        t0=ts[0],
+        t1=ts[-1],
+        y0=y0,
+        saveat=dfx.SaveAt(ts=ts),
+        dt0=None,
+        max_steps=solver_cfg['max_steps'],
+        stepsize_controller=dfx.PIDController(
+            rtol=solver_cfg['rtol'], atol=solver_cfg['atol']
+        ),
+        throw=True,
+        args=params,
+    )
     return sol.ys
 
 if __name__ == "__main__":
@@ -53,6 +56,11 @@ if __name__ == "__main__":
     params = {
         'k': K,
         'stoichiometry': ch.Stoichiometry(stoi_reac, stoi_prod),
+        'solver': {
+            'rtol': 1e-6,
+            'atol': 1e-7,
+            'max_steps': 8192,
+        },
     }
     inputs = {
         'ts': ts,
