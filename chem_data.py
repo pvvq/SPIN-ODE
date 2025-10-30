@@ -27,6 +27,10 @@ def_rober_text = \
 {3.} B + C = A + C : 1e4 ; 
 """
 
+# typical problem setup
+rober_y0 = np.array([1.0, 0.0, 0.0])
+rober_t = np.logspace(-5, 5, num=50)
+
 def_pollu_text = \
 """
 {1.} NO2 = NO + O3P : 0.350E+00 ;  
@@ -55,6 +59,10 @@ def_pollu_text = \
 {24.} NO3 + NO2 = N2O5 : 0.178E+04 ;  
 {25.} N2O5 = NO3 + NO2 : 0.312E+01 ;  
 """
+
+pollu_y0 = np.zeros(20)
+pollu_y0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]
+pollu_t = np.array([0,1,60])
 
 def_toy_44_text = """
 #EQUATIONS
@@ -170,14 +178,6 @@ class ChemistryScheme():
         self.num_react = len(self.reactions_id)
         self.stoi_reac, self.stoi_prod = self.get_stoichiometric_coef()
 
-        # seperate too large rate constant
-        if scheme_id == "toy_44" and SORT_RATE:
-            sort_order = np.argsort(self.rconst)
-            self.rconst = self.rconst[sort_order]
-            self.stoi_prod = self.stoi_prod[:, sort_order]
-            self.stoi_reac = self.stoi_reac[:, sort_order]
-            self.RO2_K_IDX = [list(sort_order).index(idx) for idx in self.RO2_K_IDX]
-
     def parse_scheme(self, scheme_id):
         if scheme_id == "toy_44":
             def_text = def_toy_44_text.split('\n')
@@ -253,63 +253,40 @@ class ChemistryScheme():
         rate[self.RO2_K_IDX] *= RO2
         dc_dt  = (self.stoi_prod - self.stoi_reac) @ rate
         return dc_dt
+    
+    def _data_solveivp(self, num_series, *, t, y0, atol, rtol, rand=None):
+        y_list, t_list = [], []
+        rng = np.random.RandomState(42)
+        for i in range(num_series):
+            if rand is not None:
+                y0 *= rng.uniform(1-rand, 1+rand, size=y0.shape)
+            sol = solve_ivp(
+                fun=self.rate_ode,
+                t_span=(t[0], t[-1]), y0=y0,
+                method="BDF", t_eval=t, atol=atol, rtol=rtol
+            )
+            y_list.append(sol.y.transpose(1, 0))
+            t_list.append(t)
+        return np.array(y_list), np.array(t_list)
 
 
 class ROBER(ChemistryScheme):
     def __init__(self):
         super().__init__(scheme_id="rober")
 
-    def data(self, num_series, rand=False):  # rand unimplement
-        y_list, t_list = [], []
-        for i in range(num_series):
-            y0 = np.array([1.0, 0.0, 0.0])
-            t = np.logspace(-5, 5, num=50)
-            sol = solve_ivp(fun=self.rate_ode, t_span=(t[0], t[-1]), y0=y0, method="BDF", t_eval=t, rtol=1e-4, atol=[1.0e-8, 1.0e-14, 1.0e-6])
-            y_list.append(sol.y.transpose(1, 0))
-            t_list.append(t)
-        return np.array(y_list), np.array(t_list)
+    def data(self, *args, t=rober_t, y0=rober_y0, rtol=1e-4, atol=[1.0e-8, 1.0e-14, 1.0e-6], **kwargs):
+        return self._data_solveivp(*args, t=t, y0=y0, rtol=rtol, atol=atol, **kwargs)
 
 class POLLU(ChemistryScheme):
     def __init__(self):
         super().__init__(scheme_id="pollu")
-        self.rng = np.random.RandomState(42)
 
-    def data(self, num_series, rand=False, t=None):
-        y_list, t_list = [], []
-        for i in range(num_series):
-            # Initial conditions
-            u0 = np.zeros(20)
-            u0[[1,3,6,7,8,16]] = [0.2, 0.04, 0.1, 0.3, 0.01, 0.007]
-            if rand:
-                u0 *= self.rng.uniform(0.99, 1.01, size=u0.shape)  # rand by 0.1
-            if t is None:
-                t = np.linspace(0, 0.1, num=100)
-            sol = solve_ivp(fun=self.rate_ode, t_span=(t[0], t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
-            y_list.append(sol.y.transpose(1, 0))
-            t_list.append(t)
-        return np.array(y_list), np.array(t_list)
+    def data(self, *args, t=pollu_t, y0=pollu_y0, atol=1e-8, rtol=1e-8, **kwargs):
+        return self._data_solveivp(*args, t=t, y0=y0, rtol=rtol, atol=atol, **kwargs)
 
 class TOY(ChemistryScheme):
     def __init__(self):
         super().__init__(scheme_id="toy_44")
-
-    def _data_solveivp(self, num_series, rand=False, t=None):
-        y_list, t_list = [], []
-        for i in range(num_series):
-            # Initial conditions
-            u0 = np.zeros(self.num_spc)
-            for line in [line.strip(" \n;") for line in toy_44_init_conc_text.split("\n")]:
-                if "=" in line:
-                    spc_name, init_val = line.split("=")
-                    u0[self.spc_names.index(spc_name.strip())] = float(init_val)
-            if rand:
-                u0 *= self.rng.uniform_(0.99, 1.01, size=u0.shape)  # rand by 0.1
-            if t is None:
-                t = np.arange(101)
-            sol = solve_ivp(fun=self.rate_ode, t_span=(t[0], t[-1]), y0=u0, method="BDF", t_eval=t, atol=1e-8, rtol=1e-8)
-            y_list.append(sol.y.transpose(1, 0))
-            t_list.append(t)
-        return np.array(y_list), np.array(t_list)
 
     def _data_csv(self, filepath: str | Path):
         filepath = Path(filepath)
@@ -330,17 +307,17 @@ class TOY(ChemistryScheme):
         
         return np.array(y_list), np.array(t_list)
     
-    def data(self, *args, rand=False, **kwargs):
+    def data(self, *args, **kwargs):
         return self._data_KPP(*args, **kwargs)
 
 
-class ChuckDataset(Dataset):
-    """Break trajectories into chucks with optional slicing and random sample"""
-    def __init__(self, ny, nt, chuck_len=None, stride_len=1, ratio=1.0):
+class TrajDataset(Dataset):
+    """Trajectory of system state"""
+    def __init__(self, ny, nt, chuck_len=None, stride_len=None, ratio=1.0):
         """
-        Init
-
         Args:
+            ny: list of system state trajectories
+            nt: list of time stamps
             check_len: len of chuck
             stride_len: stride of the sliding chuck (no stride if check_len==series_len)
             ratio: randomly sample a ratio of points in chuck
@@ -349,8 +326,8 @@ class ChuckDataset(Dataset):
         self.nt = nt  # [n_series, t]
         self.n_series = self.nt.shape[0]
         self.series_len = self.nt.shape[1]
-        self.chuck_len = self.series_len if chuck_len is None else chuck_len
-        self.stride_len = stride_len
+        self.chuck_len = chuck_len if chuck_len is not None else self.series_len
+        self.stride_len = stride_len if stride_len is not None else self.chuck_len
         self.chuck_per_serie = (self.series_len - self.chuck_len) // self.stride_len + 1
         self.total_chuck = self.n_series * self.chuck_per_serie
         self.samples_per_chuck = int(self.chuck_len * ratio)
@@ -433,24 +410,29 @@ def jax_collate(batch):
 if __name__ == "__main__":
     jax.config.update("jax_enable_x64", True)
     # Regression test for scheme simulator =====================================
-    # sch = TOY()
-    # y_arr, t_arr = sch._data_solveivp(1)
-    # true_toy_44_conc, _ = sch._data_csv("data_t100_dt1_10/toy_44.csv")
-    # print("TOY Regression test: ", np.allclose(y_arr[0][-1], true_toy_44_conc[-1], rtol=1e-3))
-    # y_arr, t_arr = sch.data(10)
-    # print(y_arr.shape)
+    sch = TOY()
+    y0 = np.zeros(sch.num_spc)
+    for line in [line.strip(" \n;") for line in toy_44_init_conc_text.split("\n")]:
+        if "=" in line:
+            spc_name, init_val = line.split("=")
+            y0[sch.spc_names.index(spc_name.strip())] = float(init_val)
+    y_arr, t_arr = sch._data_solveivp(1, t=np.arange(101), y0=y0, atol=1e-8, rtol=1e-8)
+    true_toy_44_conc, _ = sch._data_csv("data_t100_dt1_10/toy_44.csv")
+    print("TOY Regression test: ", np.allclose(y_arr[0][-1], true_toy_44_conc[-1], rtol=1e-3))
+    y_arr, t_arr = sch.data(10)
+    print(y_arr.shape)
 
-    # from plots.plot import plot_series
-    # sch = ROBER()
-    # y_arr, t_arr = sch.data(1)
-    # fig = plot_series(y_arr[0], t=t_arr[0], grid=(1,3))
-    # for ax in fig.axes:
-    #     ax.set_xscale("log")
-    # Path("plots").mkdir(parents=True, exist_ok=True)
-    # fig.savefig("plots/rober.png", dpi=300)
+    from plots.plot import plot_series
+    sch = ROBER()
+    y_arr, t_arr = sch.data(1, t=rober_t, y0=rober_y0)
+    fig = plot_series(y_arr[0], t=t_arr[0], grid=(1,3))
+    for ax in fig.axes:
+        ax.set_xscale("log")
+    Path("plots").mkdir(parents=True, exist_ok=True)
+    fig.savefig("plots/rober.png", dpi=300)
 
     sch = POLLU()
-    y_arr, t_arr = sch.data(1, t=np.array([0,1,60]))
+    y_arr, t_arr = sch.data(1, t=pollu_t, y0=pollu_y0)
     print(y_arr[0].shape)
     
     # from Verwer, 1994
@@ -465,19 +447,19 @@ if __name__ == "__main__":
     print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
 
     # Regression test for jax rate law and solver ==============================
-    import chemistry as ch
-    import model
+    # import chemistry as ch
+    # import model
 
-    params = {
-        'k': jnp.asarray(sch.rconst),
-        'stoichiometry': ch.Stoichiometry(
-            sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
-        ),
-    }
-    inputs = {
-        'y0': jnp.asarray(y_arr[0][0]),
-        'ts': jnp.asarray(t_arr[0]),
-    }
-    ys = model.forward(params, inputs)
+    # params = {
+    #     'k': jnp.asarray(sch.rconst),
+    #     'stoichiometry': ch.Stoichiometry(
+    #         sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
+    #     ),
+    # }
+    # inputs = {
+    #     'y0': jnp.asarray(y_arr[0][0]),
+    #     'ts': jnp.asarray(t_arr[0]),
+    # }
+    # ys = model.forward(params, inputs)
 
-    print("Jax Regression test: ", jnp.allclose(ys[-1], jnp.asarray(true_end_conc)))
+    # print("Jax Regression test: ", jnp.allclose(ys[-1], jnp.asarray(true_end_conc)))
