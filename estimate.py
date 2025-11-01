@@ -4,12 +4,13 @@ import jaxtyping
 import equinox as eqx
 import optax
 import tqdm
+from torch.utils.data import DataLoader
 
+import chem_data as cd
 import chemistry as ch
 import model
-import chem_data as cm
 
-sch = cm.POLLU()
+sch = cd.ROBER()
 
 est_params = {
     'k': sch.rconst,
@@ -24,38 +25,36 @@ fix_params = {
         'max_steps': 8192,
     },
 }
-init_conc = jnp.zeros(20)
-init_conc = init_conc.at[jnp.asarray([1,3,6,7,8,16])].set([0.2, 0.04, 0.1, 0.3, 0.01, 0.007])
-inputs = {
-    'ts': jnp.linspace(0,0.1,10),
-    'y0': init_conc,
-}
 
-y_ture = model.forward({**est_params, **fix_params}, inputs)
+y_arr, t_arr = sch.data(1)
+traj_dataset = cd.TrajDataset(y_arr, t_arr)
+traj_dataloader = DataLoader(traj_dataset, batch_size=8, shuffle=True, collate_fn=cd.jax_collate)
 
-import matplotlib.pyplot as plt
-fig, axes = plt.subplots(4, 5, figsize=(10,8), layout='constrained')
-for i in range(sch.num_spc):
-    row, col = i // 5, i % 5
-    axes[row][col].plot(inputs['ts'], y_ture[:,i])
-fig.savefig("plots/pollu_traj.png", dpi=300)
+def mse(pred, target):
+    return jnp.mean((pred - target) ** 2)
 
-def mse(prediction, target):
-    return jnp.mean((prediction - target) ** 2)
+def scale_mse(pred, target):
+    scale = jnp.max(target, axis=-2, keepdims=True)
+    return jnp.mean(((pred - target) / scale) ** 2)
 
-def loss_fn(estimated_params, fixed_params, inputs, y_ture):
+def loss_fn(estimated_params, fixed_params, batch):
     params = {**estimated_params, **fixed_params}
-    traj_pred = model.forward(params, inputs)
-    return mse(traj_pred, y_ture)
+    inputs = {
+        'y0': batch['conc'][:,0,:],
+        'ts': batch['time'],
+    }
+    traj_pred = eqx.filter_vmap(model.forward, in_axes=(None,0))(
+        params, inputs
+    )
+    return scale_mse(traj_pred, batch['conc'])
 
 @eqx.filter_jit
 def opt_step(
         optim: optax.GradientTransformation, opt_state: jaxtyping.PyTree,
-        estimated_params, fixed_params, inputs,
-        y_ture
+        estimated_params, fixed_params, batch
     ):
     loss_val, grads = eqx.filter_value_and_grad(loss_fn)(
-        estimated_params, fixed_params, inputs, y_ture
+        estimated_params, fixed_params, batch
     )
     updates, opt_state = optim.update(grads, opt_state)
     new_estimated_params = eqx.apply_updates(
@@ -65,22 +64,22 @@ def opt_step(
 
 
 print(f"ground truth: K={est_params['k']}")
-est_params['k'][4] = est_params['k'][4] * 0.9
-LEARNING_RATE = 1e1
+est_params['k'] = est_params['k'] * 0.99
+print(f"before optimisation: {est_params}")
+
+LEARNING_RATE = 1e-3
 EPOCHS = 100
 
 optimizer = optax.sgd(LEARNING_RATE)
 opt_state = optimizer.init(est_params)
 
-print(f"before optimisation: {est_params}")
 bar = tqdm.tqdm(range(0, EPOCHS), desc=f"Epochs", initial=0)
-
 for i in bar:
-    est_params, loss_val, opt_state = opt_step(
-        optimizer, opt_state,
-        est_params, fix_params, inputs,
-        y_ture
-    )
+    for batch in traj_dataloader:
+        est_params, loss_val, opt_state = opt_step(
+            optimizer, opt_state,
+            est_params, fix_params, batch
+        )
     bar.set_postfix({
         'loss': f"{float(jnp.squeeze(loss_val)):.4e}",
     })
