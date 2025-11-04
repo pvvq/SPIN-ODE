@@ -445,21 +445,3 @@ if __name__ == "__main__":
     """
     true_end_conc = np.fromstring(true_end_conc_text, sep=' ')
     print("POLLU Regression test: ", np.allclose(y_arr[0][-1], true_end_conc))
-
-    # Regression test for jax rate law and solver ==============================
-    # import chemistry as ch
-    # import model
-
-    # params = {
-    #     'k': jnp.asarray(sch.rconst),
-    #     'stoichiometry': ch.Stoichiometry(
-    #         sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
-    #     ),
-    # }
-    # inputs = {
-    #     'y0': jnp.asarray(y_arr[0][0]),
-    #     'ts': jnp.asarray(t_arr[0]),
-    # }
-    # ys = model.forward(params, inputs)
-
-    # print("Jax Regression test: ", jnp.allclose(ys[-1], jnp.asarray(true_end_conc)))

@@ -45,17 +45,15 @@ def forward(params: dict, inputs: dict):
     return sol.ys
 
 if __name__ == "__main__":
-    # Example reaction:
-    # NO+O3 -> NO2: 0.266 * 10^2
-    stoi_reac = jnp.asarray([[1,1,0]]).T  # reaction stoichiometric matrix
-    stoi_prod = jnp.asarray([[0,0,1]]).T  # product stoichiometric matrix
-    K = jnp.asarray([0.266e2])            # reaction rate coefficient
-    ts = jnp.arange(0, 1, 0.1)            # time span
-    y0 = jnp.asarray([0.2, 0.04, 0])      # initial concentration
+    import chem_data as cd
+
+    sch = cd.POLLU()
 
     params = {
-        'k': K,
-        'stoichiometry': ch.Stoichiometry(stoi_reac, stoi_prod),
+        'k': jnp.asarray(sch.rconst),
+        'stoichiometry': ch.Stoichiometry(
+            sch.stoi_reac, sch.stoi_prod, sch.RO2_IDX, sch.RO2_K_IDX
+        ),
         'solver': {
             'rtol': 1e-6,
             'atol': 1e-7,
@@ -63,17 +61,19 @@ if __name__ == "__main__":
         },
     }
     inputs = {
-        'ts': ts,
-        'y0': y0,
+        'ts': jnp.asarray(cd.pollu_t),
+        'y0': jnp.asarray(cd.pollu_y0),
     }
+    traj = forward(params, inputs)
 
-    traj_measure = forward(params, inputs)
-    print(traj_measure)
+    # from Verwer, 1994
+    true_end_conc_text = """
+    5.64625548e-02 1.34248413e-01 4.13973433e-09 5.52314021e-03
+    2.01897726e-07 1.46454186e-07 7.78424912e-02 3.24507535e-01
+    7.49401338e-03 1.62229316e-08 1.13586383e-08 2.23050598e-03
+    2.08716288e-04 1.39692102e-05 8.96488486e-03 4.35284637e-18
+    6.89921970e-03 1.00780304e-04 1.77214651e-06 5.68294329e-05
+    """
+    true_end_conc = jnp.fromstring(true_end_conc_text, sep=' ')
 
-
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(1, 3, figsize=(6,2), layout='constrained')
-    for i in range(3):
-        axes[i].plot(inputs['ts'], traj_measure[:,i])
-    fig.savefig("plots/demo_traj.png", dpi=300)
+    print("Regression test: ", jnp.allclose(traj[-1], true_end_conc))
