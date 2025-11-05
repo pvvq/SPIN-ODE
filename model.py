@@ -1,11 +1,21 @@
+from typing import Callable
+
 import jax
 import jax.numpy as jnp
 import diffrax as dfx
 
 import chemistry as ch
 
+def kinetic_ode(t, y, args):
+    """time derivative of model state"""
+    dy_dt = ch.power_rate_law(y, args['k'], args["stoichiometry"])
+    return dy_dt
 
-def forward(params: dict, inputs: dict):
+def neural_ode(t, y, args):
+    nn = args['neural_network']
+    return nn(t, y)
+
+def forward(params: dict, inputs: dict, ode: Callable):
     """
     Move the model state forward in time
 
@@ -14,15 +24,10 @@ def forward(params: dict, inputs: dict):
     Args:
         params: model parameters
         inputs: model inputs
+        ode: function of time derivative
     Returns:
         integrated model state
     """
-
-    def ode(t, y, args):
-        """time derivative of model state"""
-        dy_dt = ch.power_rate_law(y, args['k'], args["stoichiometry"])
-        return dy_dt
-
     ts = inputs['ts']
     y0 = inputs['y0']
     solver_cfg = params['solver']
@@ -64,7 +69,7 @@ if __name__ == "__main__":
         'ts': jnp.asarray(cd.pollu_t),
         'y0': jnp.asarray(cd.pollu_y0),
     }
-    traj = forward(params, inputs)
+    traj = forward(params, inputs, kinetic_ode)
 
     # from Verwer, 1994
     true_end_conc_text = """

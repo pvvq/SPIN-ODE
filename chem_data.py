@@ -318,7 +318,7 @@ class TrajDataset(Dataset):
         Args:
             ny: list of system state trajectories
             nt: list of time stamps
-            check_len: len of chuck
+            chuck_len: len of chuck
             stride_len: stride of the sliding chuck (no stride if check_len==series_len)
             ratio: randomly sample a ratio of points in chuck
         """
