@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import jaxtyping
@@ -9,10 +11,9 @@ from torch.utils.data import DataLoader
 import chem_data as cd
 import model
 import network as nn
+import train_utils
 
-SEED = 42
-LEARNING_RATE = 1e-3
-EPOCHS = 100
+cfg = train_utils.load_config()
 
 # Data =========================================================================
 
@@ -31,7 +32,7 @@ scale['ytScale'] = scale['yScale'] / scale['tScale']
 
 neural_network = nn.ScaleMLP(
     sch.num_spc, scale,
-    width_size=128, depth=3, key=jax.random.PRNGKey(SEED)
+    width_size=128, depth=3, key=jax.random.PRNGKey(cfg['seed'])
 )
 
 def mse(pred, target):
@@ -45,9 +46,9 @@ def loss_fn(neu_net, batch):
     params = {
         'neural_network': neu_net,
         'solver': {
-            'rtol': 1e-3,
-            'atol': 1e-4,
-            'max_steps': 8192,
+            'rtol': cfg['solver']['rtol'],
+            'atol': cfg['solver']['atol'],
+            'max_steps': cfg['solver']['max_steps'],
         },
     }
     inputs = {
@@ -74,8 +75,12 @@ def opt_step(
     return new_neu_net, loss_val, opt_state
 
 # Training =====================================================================
+import orbax.checkpoint as ocp
+checkpointer = ocp.StandardCheckpointer()
+ckpt_path = ocp.test_utils.erase_and_create_empty(Path('checkpoints/').absolute())
+ckpt_cnt = 0
 
-optimizer = optax.adam(LEARNING_RATE)
+optimizer = optax.adam(cfg['learning_rate'])
 opt_state = optimizer.init(eqx.filter(neural_network, eqx.is_inexact_array))
 
 for first_n in jnp.arange(0.1, 1.1, 0.1):
@@ -86,7 +91,7 @@ for first_n in jnp.arange(0.1, 1.1, 0.1):
     )
     traj_dataloader = DataLoader(traj_dataset, batch_size=8, shuffle=True, collate_fn=cd.jax_collate)
 
-    bar = tqdm.tqdm(range(0, EPOCHS), desc=f"Epochs", initial=0)
+    bar = tqdm.tqdm(range(0, cfg['epochs']), desc=f"Epochs", initial=0)
     for i in bar:
         for batch in traj_dataloader:
             neural_network, loss_val, opt_state = opt_step(
@@ -96,3 +101,8 @@ for first_n in jnp.arange(0.1, 1.1, 0.1):
         bar.set_postfix({
             'loss': f"{float(jnp.squeeze(loss_val)):.4e}",
         })
+
+    # checkpoint
+    saveable, _ = eqx.partition(neural_network, eqx.is_array_like)
+    checkpointer.save(ckpt_path / f"{ckpt_cnt}", saveable)
+    ckpt_cnt += 1
