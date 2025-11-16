@@ -6,7 +6,7 @@ import diffrax as dfx
 
 import chemistry as ch
 
-def kinetic_ode(t, y, args):
+def physical_ode(t, y, args):
     """time derivative of model state"""
     dy_dt = ch.power_rate_law(y, args['k'], args["stoichiometry"])
     return dy_dt
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         'ts': jnp.asarray(cd.pollu_t),
         'y0': jnp.asarray(cd.pollu_y0),
     }
-    traj = forward(params, inputs, kinetic_ode)
+    traj = forward(params, inputs, physical_ode)
 
     # from Verwer, 1994
     true_end_conc_text = """
