@@ -8,12 +8,13 @@ default:
 
   # model
   solver:
-    rtol: 1.e-3
-    atol: 1.e-4
-    max_steps: 8192
+    rtol: 1.e-6
+    atol: 1.e-7
+    max_steps: 100000
+    checkpoints: 10000
 
   # training
-  epochs: 100
-  learning_rate: 1.e-3
+  epochs: 2000
+  learning_rate: 1.e-2
   ckpt_keep: 10
   ckpt_interval: 1000

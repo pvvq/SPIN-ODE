@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import jaxtyping
 import equinox as eqx
 
 
@@ -42,14 +43,10 @@ def TVLoss1D(x, scale, window_size=1):
 # Kim, Suyong, et al. "Stiff neural ordinary differential equations."
 class ScaleMLP(eqx.Module):
     mlp: eqx.nn.MLP
-    yMin: jax.Array
-    yscale: jax.Array
-    ytscale: jax.Array
 
     def __init__(
             self,
             data_size: int,
-            scale: dict[str, jax.typing.ArrayLike],
             width_size: int,
             depth: int,
             key,
@@ -57,7 +54,7 @@ class ScaleMLP(eqx.Module):
         """
         Args:
             num_spc: number of species
-            scale: dict of concentration and time scales
+            scale: time series scale statistics
         """
         super().__init__()
 
@@ -69,12 +66,8 @@ class ScaleMLP(eqx.Module):
             key=key,
         )
 
-        self.yMin = scale['yMin']
-        self.yscale = scale['yScale']
-        self.ytscale = scale['ytScale']
-
-    def __call__(self, t: jax.Array, y: jax.Array) -> jax.Array:
-        y = (y - self.yMin) / self.yscale
-        y = self.mlp(y)
-        dy_dt = y * self.ytscale
+    def __call__(self, y: jax.Array, scale: dict) -> jax.Array:
+        y_safe = jnp.clip(y, 0.0)
+        y_scaled = y_safe / scale['yScale']
+        dy_dt = self.mlp(y_scaled) * scale['ytScale']
         return dy_dt

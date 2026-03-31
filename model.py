@@ -13,7 +13,7 @@ def physical_ode(t, y, args):
 
 def neural_ode(t, y, args):
     nn = args['neural_network']
-    return nn(t, y)
+    return nn(y, args['scale'])
 
 def forward(params: dict, inputs: dict, ode: Callable):
     """
@@ -41,6 +41,9 @@ def forward(params: dict, inputs: dict, ode: Callable):
         saveat=dfx.SaveAt(ts=ts),
         dt0=None,
         max_steps=solver_cfg['max_steps'],
+        adjoint=dfx.RecursiveCheckpointAdjoint(
+            checkpoints=solver_cfg['checkpoints']
+        ),
         stepsize_controller=dfx.PIDController(
             rtol=solver_cfg['rtol'], atol=solver_cfg['atol']
         ),
