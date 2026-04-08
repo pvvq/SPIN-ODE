@@ -1,8 +1,13 @@
 import jax
 import jax.numpy as jnp
 import jaxtyping
-import equinox as eqx
 
+
+def mse(pred, target):
+    return jnp.mean((pred - target) ** 2)
+
+def scale_mse(pred, target, scale):
+    return jnp.mean(((pred - target) / scale) ** 2)
 
 def SMSPELoss(pred, truth):
     """Symmetric Mean Squared Percentage Error"""
@@ -38,36 +43,3 @@ def TVLoss1D(x, scale, window_size=1):
 
     loss = jnp.mean(tv / scale)
     return loss
-
-
-# Kim, Suyong, et al. "Stiff neural ordinary differential equations."
-class ScaleMLP(eqx.Module):
-    mlp: eqx.nn.MLP
-
-    def __init__(
-            self,
-            data_size: int,
-            width_size: int,
-            depth: int,
-            key,
-        ):
-        """
-        Args:
-            num_spc: number of species
-            scale: time series scale statistics
-        """
-        super().__init__()
-
-        self.mlp = eqx.nn.MLP(
-            in_size=data_size,
-            out_size=data_size,
-            width_size=width_size,
-            depth=depth,
-            key=key,
-        )
-
-    def __call__(self, y: jax.Array, scale: dict) -> jax.Array:
-        y_safe = jnp.clip(y, 0.0)
-        y_scaled = y_safe / scale['yScale']
-        dy_dt = self.mlp(y_scaled) * scale['ytScale']
-        return dy_dt

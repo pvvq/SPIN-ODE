@@ -5,6 +5,7 @@ venv*/
 *logs*/
 plots/*.png
 plots/*.svg
+plots/*.pdf
 checkpoint*/
 cache*/
 
