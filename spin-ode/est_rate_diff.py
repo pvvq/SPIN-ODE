@@ -36,11 +36,10 @@ nspec = len(sch["SPC_NAMES"])
 # params = {**kinetics, 'solver': cfg['solver']}
 # ys = data.get_ys(params, ts, y0)
 
-b_ys = data.load_toy_dataset("dataset1-10/", sch["SPC_NAMES"])
+b_ys = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
 # print(b_ys.shape)
 ys = b_ys[0]
 b_ys = jnp.expand_dims(ys, 0)
-b_dydt = jnp.gradient(b_ys, ts, axis=1)
 
 
 scale = {
@@ -54,12 +53,43 @@ scale["yScale"] = jnp.where(
 scale["ytScale"] = scale["yScale"] / scale["tScale"]
 print(scale)
 
-# Model ========================================================================
-
 params = {
     **kinetics,
     "scale": scale,
 }
+
+# finite diff
+b_dydt_finite = jnp.gradient(b_ys, ts, axis=1)
+
+
+# neural ode
+neural_network = model.ScaleMLP(
+    data_size=nspec,
+    width_size=10,
+    depth=4,
+    key=jax.random.PRNGKey(cfg["seed"]),
+)
+
+checkpointer = ocp.StandardCheckpointer()
+ckpt_path = Path("checkpoints_cache/fit_all_toy").absolute()
+# ckpt_path = ocp.test_utils.erase_and_create_empty(ckpt_path)
+ckpt_idx = 4
+
+# load checkpoint
+state, static = eqx.partition(neural_network, eqx.is_array_like)
+abstract_state = jax.tree.map(ocp.utils.to_shape_dtype_struct, state)
+restored_state = checkpointer.restore(ckpt_path / f"{ckpt_idx}", abstract_state)
+neural_network = eqx.combine(restored_state, static)
+
+params ["neural_network"] = neural_network
+b_dydt_nn = eqx.filter_vmap(
+    eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
+    in_axes=(None, 0, None)
+)(None, b_ys, params)
+
+b_dydt = b_dydt_nn
+
+# Model ========================================================================
 
 var_names = ["k_static", "ro2_coef"]
 ground_truth = {k: v for k, v in params.items() if k in var_names}
@@ -112,7 +142,7 @@ def train(var_params):
         bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
         for i in bar:
             var_params, loss_val, opt_state = opt_step(
-                optimizer, opt_state, var_params, fix_params, b_dydt, ys
+                optimizer, opt_state, var_params, fix_params, b_dydt[0], b_ys[0]
             )
             bar.set_postfix(
                 {
@@ -126,7 +156,8 @@ def train(var_params):
             "pred": jax.tree.map(jnp.exp, var_params),
         }, f)
 
-# train(var_params)
+train(var_params)
+
 with open("cache/est_rate_diff.pkl", "rb") as f:
     dump = pickle.load(f)
 ground_truth, pred = dump["true"], dump["pred"]
