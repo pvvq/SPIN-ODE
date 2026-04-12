@@ -14,7 +14,7 @@ default:
     checkpoints: 10000
 
   # training
-  epochs: 2000
+  epochs: 10000
   learning_rate: 1.e-2
   ckpt_keep: 10
   ckpt_interval: 1000
