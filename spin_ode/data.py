@@ -133,3 +133,36 @@ def create_noise():
             "k_multiplier_n10": 1.1**k_noise,
         },
     )
+
+
+def get_mass_projection(
+    target_spc_names,
+    atom_comp_filename="atoms.txt",
+    atom_spec_filename="compounds_atom.txt",
+    precesion: float = 0.1,
+):
+    folder = Path(TOY_DATASET_DIR)
+    atom_comp = np.loadtxt(folder / atom_comp_filename)
+    atom_spec = [
+        (line.strip())
+        for line in (folder / atom_spec_filename).read_text().splitlines()
+        if line.strip()
+    ]
+
+    # Reorder speies to match given species order
+    name_idx = {name: i for i, name in enumerate(atom_spec)}
+    reorder = [name_idx[name] for name in target_spc_names]
+    atom_comp = atom_comp[reorder]
+
+    atom_mass = jnp.array([12.00, 1.00784, 15.994914, 14.00307400])  # C, H, O, N
+    spc_mass = jnp.sum(atom_comp * atom_mass, axis=1)
+    prec = jnp.asarray(precesion)
+    unique_mass, inverse = jnp.unique(
+        jnp.round(spc_mass / prec) * prec, return_inverse=True
+    )
+    projection_spc_mass = (
+        jnp.zeros((unique_mass.shape[0], atom_comp.shape[0]))
+        .at[inverse, jnp.arange(atom_comp.shape[0])]
+        .set(1.0)
+    )
+    return unique_mass, projection_spc_mass
