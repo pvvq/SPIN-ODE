@@ -70,7 +70,7 @@ fix_params = {"solver": cfg["solver"], "scale": scale}
 
 def loss_fn_b(var_params, fix_params, ts, b_ys):
     params = {**var_params, **fix_params}
-    ys_pred = eqx.filter_vmap(model.forward, in_axes=(None, None, 0, None))(
+    ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
         params, ts, b_ys[:, 0], model.neural_ode
     )
     return scale_mse(ys_pred, b_ys, params["scale"]["yScale"])
@@ -78,7 +78,7 @@ def loss_fn_b(var_params, fix_params, ts, b_ys):
 
 def loss_fn(var_params, fix_params, ts, ys):
     params = {**var_params, **fix_params}
-    ys_pred = model.forward(params, ts, ys[0], model.neural_ode)
+    ys_pred = model.solve(params, ts, ys[0], model.neural_ode)
     return scale_mse(ys_pred, ys, params["scale"]["yScale"])
 
 
@@ -140,7 +140,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
         if i % 50 == 0:
             # Testing
-            traj_pred = model.forward(
+            traj_pred = model.solve(
                 {**var_params, **fix_params}, ts, ys[0], model.neural_ode
             )
             print(scale_mse(traj_pred, ys, scale["yScale"]))

@@ -87,7 +87,7 @@ b_dydt_nn = eqx.filter_vmap(
     in_axes=(None, 0, None)
 )(None, b_ys, params)
 
-b_dydt = b_dydt_nn
+b_dydt = b_dydt_finite
 
 # Model ========================================================================
 
@@ -105,7 +105,10 @@ def loss_fn(var_params, fix_params, dydt, ys):
         kinetic_dydt = model.kinetic_ode(None, y, params)
         return kinetic_dydt
 
-    pred_dydt = eqx.filter_vmap(_pred, in_axes=(None, 0))(params, ys)
+    pred_dydt = eqx.filter_vmap(
+        eqx.filter_vmap(_pred, in_axes=(None, 0)),
+        in_axes=(None, 0),
+    )(params, ys)
     loss = scale_mse(dydt, pred_dydt, params["scale"]["ytScale"])
     return loss
 
@@ -120,7 +123,7 @@ def opt_step(
     ys,
 ):
     loss_val, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, dydt, ys)
-    updates, opt_state = optim.update(grads, opt_state, var_params)
+    updates, opt_state = optim.update(grads, opt_state, var_params, value=loss_val)
     new_var_params = eqx.apply_updates(var_params, updates)
     return new_var_params, loss_val, opt_state
 
@@ -142,7 +145,7 @@ def train(var_params):
         bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
         for i in bar:
             var_params, loss_val, opt_state = opt_step(
-                optimizer, opt_state, var_params, fix_params, b_dydt[0], b_ys[0]
+                optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
             )
             bar.set_postfix(
                 {

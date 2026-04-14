@@ -74,7 +74,7 @@ def get_scheme(sch_name: str):
 
 
 def get_ys(params, ts, y0):
-    return model.forward(params, ts, y0, model.kinetic_ode)
+    return model.solve(params, ts, y0, model.kinetic_ode)
 
 
 TOY_DATASET_DIR = "dataset1-10/"

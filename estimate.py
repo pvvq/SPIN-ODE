@@ -43,7 +43,7 @@ def loss_fn(estimated_params, fixed_params, batch):
         'y0': batch['conc'][:,0,:],
         'ts': batch['time'],
     }
-    traj_pred = eqx.filter_vmap(model.forward, in_axes=(None,0,None))(
+    traj_pred = eqx.filter_vmap(model.solve, in_axes=(None,0,None))(
         params, inputs, model.physical_ode
     )
     return scale_mse(traj_pred, batch['conc'])

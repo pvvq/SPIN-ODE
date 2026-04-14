@@ -26,8 +26,8 @@ def signed_softlog_mse(y_true, y_pred, alpha=10.0):
 def LogMAELoss(pred, truth):
     return jnp.mean(jnp.abs(jnp.log(pred) - jnp.log(truth)))
 
-def LogMSELoss(pred, truth):
-    return jnp.mean(jnp.square(jnp.log(pred) - jnp.log(truth)))
+def log_mse(pred, truth, eps=1e-8):
+    return jnp.mean((jnp.log(pred + eps) - jnp.log(truth + eps)) ** 2)
 
 def ScaleMSELoss(pred, truth, yscale):
     scaled_diff = (pred - truth) / yscale
@@ -43,3 +43,6 @@ def TVLoss1D(x, scale, window_size=1):
 
     loss = jnp.mean(tv / scale)
     return loss
+
+def asinh_loss(y_pred, y_obs, scale=1.0):
+    return jnp.mean((jnp.arcsinh(y_pred / scale) - jnp.arcsinh(y_obs / scale)) ** 2)

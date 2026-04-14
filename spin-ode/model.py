@@ -49,15 +49,14 @@ def kinetic_ode(t, y, args):
     dy_dt = args["rate_law_fn"](y, k, args["stoicm"])
     return dy_dt
 
-def forward(params: dict, ts, y0, ode: Callable):
+def solve(params: dict, ts, y0, ode: Callable):
     """
-    Move the model state forward in time
-
-    Model entrance, integrate time derivative of model state in time
+    Solve the model ODE in time from initial state
 
     Args:
         params: model parameters
-        inputs: model inputs
+        ts: time span
+        y0: initial state
         ode: function of time derivative
     Returns:
         integrated model state
