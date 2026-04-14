@@ -171,7 +171,7 @@ import schemes.toy_autoxidation.rates as rates
 def combine_static_ro2(tree):
     combined = jnp.zeros(rates.NREACT)
     combined = combined.at[rates._STATIC_DYN_INDICES].set(tree["k_static"][rates._STATIC_DYN_INDICES])
-    combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"][rates._RO2_INDICES])
+    combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
     return combined
 
 
