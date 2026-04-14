@@ -1,7 +1,11 @@
-# Usage: python traj_fit.py
-#           --config <config_path>
-#           --target <yaml_target>
-#           --log/--no-log
+"""
+Estimate rate coefficient by gradient descent of trajectory loss
+
+Usage: python traj_fit.py
+          --config <config_path>
+          --target <yaml_target>
+          --log/--no-log
+"""
 
 import sys
 from pathlib import Path
@@ -29,6 +33,7 @@ import schemes.toy_autoxidation.rates as rates
 
 FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 cfg = utils.load_config()
+key = jax.random.PRNGKey(cfg["seed"])
 
 # Data =========================================================================
 
@@ -42,6 +47,9 @@ b_ys = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
 # print(b_ys.shape)
 ys = b_ys[0]
 b_ys = jnp.expand_dims(ys, 0)
+
+subkey, key = jax.random.split(key, 2)
+b_ys = data.add_normal_noise(b_ys, 7e-2, subkey)
 
 
 scale = {
@@ -67,17 +75,27 @@ params = {
 var_names = ["k_static", "ro2_coef"]
 ground_truth = {k: v for k, v in params.items() if k in var_names}
 fix_params = {k: v for k, v in params.items() if k not in var_names}
+
 # load predicted rate in step est_rate_diff
-with open("cache/est_rate_diff.pkl", "rb") as f:
-    dump = pickle.load(f)
-var_params = jax.tree.map(jnp.log, dump["pred"])
+# with open("cache/est_rate_diff.pkl", "rb") as f:
+#     dump = pickle.load(f)
+# var_params = dump["pred"]
+
+# add random noise
+var_params = jax.tree.map(
+    lambda l: data.add_normal_noise(l, factor=1e-1, key=key),
+    ground_truth
+)
+
+var_params_log = jax.tree.map(jnp.log, var_params)
 print(var_params)
 
 # only optimise NO and HO2 related reactions
-fix_params["opt_mask"] = {
-    'k_static': jnp.zeros(rates.NREACT, dtype=bool).at[4:12].set(True).at[20:28].set(True),
-    'ro2_coef': jnp.zeros(rates.N_RO2, dtype=bool),
-}
+# fix_params["opt_mask"] = {
+#     'k_static': jnp.zeros(rates.NREACT, dtype=bool).at[4:12].set(True).at[20:28].set(True),
+#     'ro2_coef': jnp.zeros(rates.N_RO2, dtype=bool),
+# }
+fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
 
 def combine_static_ro2(tree):
     combined = jnp.zeros(rates.NREACT)
@@ -85,12 +103,16 @@ def combine_static_ro2(tree):
     combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
     return combined
 
+combined_true = combine_static_ro2(ground_truth)
+combined_init = combine_static_ro2(var_params)
 
 def loss_fn(var_params, fix_params, ts, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
     params = {**var_params, **fix_params}
     ys_pred = model.solve(params, ts, ys[0], model.kinetic_ode)
-    return log_mse(ys_pred, ys)
+    loss = log_mse(ys_pred, ys)
+    loss = scale_mse(ys_pred, ys, params["scale"]["yScale"])
+    return loss
 
 
 @eqx.filter_jit
@@ -130,7 +152,6 @@ def train(var_params):
             var_params, loss_val, opt_state = opt_step(
                 optimizer, opt_state, var_params, fix_params, ts, b_ys[0]
             )
-            combined_true = combine_static_ro2(ground_truth)
             combined_pred = combine_static_ro2(jax.tree.map(jnp.exp, var_params))
             k_diff = log_mse(combined_pred, combined_true, eps=1e-16)
             bar.set_postfix(
@@ -149,8 +170,9 @@ def train(var_params):
                 fig.savefig("plots/est_traj.pdf")
 
                 fig, ax = plt.subplots(1,1)
-                ax.scatter(jnp.arange(combined_true.shape[0]), combined_true, label="true", marker="x")
-                ax.scatter(jnp.arange(combined_pred.shape[0]), combined_pred, label="pred", marker="+")
+                ax.scatter(jnp.arange(combined_true.shape[0]), combined_true/combined_true, label="true", marker="x")
+                ax.scatter(jnp.arange(combined_init.shape[0]), combined_init/combined_true, label="init", marker=".")
+                ax.scatter(jnp.arange(combined_pred.shape[0]), combined_pred/combined_true, label="pred", marker="+")
                 ax.legend()
                 ax.set_yscale("log")
                 fig.tight_layout()
@@ -164,7 +186,7 @@ def train(var_params):
                         "pred": jax.tree.map(jnp.exp, var_params),
                     }, f)
 
-train(var_params)
+train(var_params_log)
 
 with open("cache/est_rate_traj.pkl", "rb") as f:
     dump = pickle.load(f)

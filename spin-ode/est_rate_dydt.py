@@ -1,7 +1,11 @@
-# Usage: python traj_fit.py
-#           --config <config_path>
-#           --target <yaml_target>
-#           --log/--no-log
+"""
+Estimate rate coefficient by gradient descent of time derivative loss
+
+Usage: python traj_fit.py
+          --config <config_path>
+          --target <yaml_target>
+          --log/--no-log
+"""
 
 import sys
 from pathlib import Path
