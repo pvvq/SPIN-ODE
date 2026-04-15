@@ -1,7 +1,8 @@
-# Usage: python traj_fit.py
-#           --config <config_path>
-#           --target <yaml_target>
-#           --log/--no-log
+"""
+Neural ODE fit trajectory
+
+Usage: python traj_fit.py -h
+"""
 
 import sys
 from pathlib import Path
@@ -18,14 +19,20 @@ jax.config.update("jax_enable_x64", True)
 
 import model
 import data
-import utils
-from metrics import *
+import manager as mngr
+from metrics import scale_mse, log_mse
 
 sys.path.append(str(Path.cwd()))
 import plots.plot as pp
 
 FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
-cfg = utils.load_config()
+cfg = mngr.load_config()
+if cfg["save_dir"]:
+    ckpt_mngr = mngr.get_checkpoint_manager(
+        cfg["save_dir"] / "checkpoints",
+        cfg["ckpt_interval"],
+        cfg["ckpt_keep"],
+    )
 
 # Data =========================================================================
 
@@ -50,7 +57,6 @@ scale["yScale"] = jnp.where(
     scale["yMax"] - scale["yMin"] == 0.0, scale["yMax"], scale["yMax"] - scale["yMin"]
 )
 scale["ytScale"] = scale["yScale"] / scale["tScale"]
-print(scale)
 
 # Model ========================================================================
 
@@ -91,58 +97,50 @@ def opt_step(
     ts,
     ys,
 ):
-    loss_val, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, ts, ys)
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, ts, ys)
     updates, opt_state = optim.update(grads, opt_state, var_params)
     new_var_params = eqx.apply_updates(var_params, updates)
-    return new_var_params, loss_val, opt_state
+    return new_var_params, loss, opt_state
 
 
 # Training =====================================================================
-checkpointer = ocp.StandardCheckpointer()
-ckpt_path = Path("checkpoints/").absolute()
-ckpt_path = ocp.test_utils.erase_and_create_empty(ckpt_path)
-ckpt_idx = 0
+def train(var_params):
+    optimizer = optax.chain(
+        optax.clip(10),
+        optax.adamw(cfg["learning_rate"]),
+        # optax.contrib.reduce_on_plateau(factor=0.5, patience=100),
+    )
+    opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
-# load checkpoint
-# state, static = eqx.partition(neural_network, eqx.is_array_like)
-# abstract_state = jax.tree.map(ocp.utils.to_shape_dtype_struct, state)
-# restored_state = checkpointer.restore(ckpt_path / f"{ckpt_idx}", abstract_state)
-# neural_network = eqx.combine(restored_state, static)
+    length_strategy = [1.0]
+    epochs_strategy = [cfg["epochs"]]
+    for length, epochs in zip(length_strategy, epochs_strategy):
+        print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-optimizer = optax.chain(
-    optax.clip(10),
-    optax.adamw(cfg["learning_rate"]),
-    # optax.contrib.reduce_on_plateau(factor=0.5, patience=100),
-)
-opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
-
-length_strategy = [1.0]
-epochs_strategy = [cfg["epochs"]]
-for length, epochs in zip(length_strategy, epochs_strategy):
-    print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
-
-    bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
-    for i in bar:
-        var_params, loss_val, opt_state = opt_step(
-            optimizer, opt_state, var_params, fix_params, ts, ys
-        )
-        bar.set_postfix(
-            {
-                "loss": f"{float(jnp.squeeze(loss_val)):.4e}",
-            }
-        )
-
-        if i % 500 == 0:
-            # checkpoint
-            model_state, _ = eqx.partition(neural_network, eqx.is_array_like)
-            ckpt_idx += 1
-            checkpointer.save(ckpt_path / f"{ckpt_idx}", model_state)
-
-        if i % 50 == 0:
-            # Testing
-            traj_pred = model.solve(
-                {**var_params, **fix_params}, ts, ys[0], model.neural_ode
+        bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
+        for i in bar:
+            var_params, loss, opt_state = opt_step(
+                optimizer, opt_state, var_params, fix_params, ts, ys
             )
-            print(scale_mse(traj_pred, ys, scale["yScale"]))
-            fig = pp.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
-            fig.savefig("plots/traj_fit.pdf")
+            bar.set_postfix({"loss": f"{float(jnp.squeeze(loss)):.4e}",})
+
+            if cfg["save_dir"]:  # checkpoint
+                state, _ = eqx.partition(neural_network, eqx.is_array_like)
+                mngr.standard_save(ckpt_mngr, i, state, loss)
+
+            if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
+                traj_pred = model.solve(
+                    {**var_params, **fix_params}, ts, ys[0], model.neural_ode
+                )
+                err_traj = scale_mse(traj_pred, ys, scale["yScale"])
+                fig = pp.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
+                fig.savefig(cfg["save_dir"] / "traj_fit.pdf")
+
+    return var_params
+
+if cfg["train"]:
+    var_params = train(var_params)
+
+if cfg["save_dir"]:
+    ckpt_mngr.wait_until_finished()
+    ckpt_mngr.close()

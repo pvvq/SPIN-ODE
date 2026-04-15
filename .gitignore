@@ -6,7 +6,7 @@ venv*/
 plots/*.png
 plots/*.svg
 plots/*.pdf
-checkpoint*/
+experiment*/
 cache*/
 
 # Byte-compiled / optimized / DLL files

@@ -1,10 +1,5 @@
-default:
+default: &default
   seed: 42
-  
-  # logging savepath
-  base_dir: tb_logs
-  name: spin
-  version: default
 
   # model
   solver:
@@ -12,9 +7,35 @@ default:
     atol: 1.e-7
     max_steps: 100000
     checkpoints: 10000
+  
+  ckpt_keep: 3
 
-  # training
-  epochs: 10000
+traj_fit:
+  <<: *default
+  epochs: 2000
   learning_rate: 1.e-2
-  ckpt_keep: 10
+  test_interval: 100
+  ckpt_interval: 1000
+
+est_rate_dydt: &est_rate_dydt
+  <<: *default
+  epochs: 5000
+  learning_rate: 1.e-2
+  test_interval: 100
+  ckpt_interval: 1000
+
+est_rate_neural_ode:
+  <<: *est_rate_dydt
+  dydt: "neural_ode"
+  neural_ode_ckpt: experiments/traj_fit/checkpoints
+
+est_rate_finite_diff:
+  <<: *est_rate_dydt
+  dydt: "finite_diff"
+
+est_rate_traj:
+  <<: *default
+  epochs: 2000
+  learning_rate: 1.e-3
+  test_interval: 100
   ckpt_interval: 1000

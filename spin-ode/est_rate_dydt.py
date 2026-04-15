@@ -1,10 +1,7 @@
 """
 Estimate rate coefficient by gradient descent of time derivative loss
 
-Usage: python traj_fit.py
-          --config <config_path>
-          --target <yaml_target>
-          --log/--no-log
+Usage: python est_rate_dydt.py -h
 """
 
 import sys
@@ -16,21 +13,29 @@ import jax.numpy as jnp
 import jaxtyping
 import equinox as eqx
 import optax
-import orbax.checkpoint as ocp
 import tqdm
+import numpy as np
+import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)
 
 import model
 import data
-import utils
-from metrics import *
+import manager as mngr
+from metrics import scale_mse, log_mse
 
 sys.path.append(str(Path.cwd()))
 import plots.plot as pp
 
 FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
-cfg = utils.load_config()
+
+cfg = mngr.load_config()
+if cfg["save_dir"]:
+    ckpt_mngr = mngr.get_checkpoint_manager(
+        cfg["save_dir"] / "checkpoints",
+        cfg["ckpt_interval"],
+        cfg["ckpt_keep"],
+    )
 
 # Data =========================================================================
 
@@ -55,50 +60,46 @@ scale["yScale"] = jnp.where(
     scale["yMax"] - scale["yMin"] == 0.0, scale["yMax"], scale["yMax"] - scale["yMin"]
 )
 scale["ytScale"] = scale["yScale"] / scale["tScale"]
-print(scale)
 
 params = {
     **kinetics,
     "scale": scale,
 }
 
-# finite diff
-b_dydt_finite = jnp.gradient(b_ys, ts, axis=1)
+# prepare dydt data
+if cfg["dydt"] == "neural_ode":
+    neural_network = model.ScaleMLP(
+        data_size=nspec,
+        width_size=10,
+        depth=4,
+        key=jax.random.PRNGKey(cfg["seed"]),
+    )
 
+    # load checkpoint
+    restore_path = Path(cfg["neural_ode_ckpt"]).absolute()
+    restore_mngr = mngr.get_checkpoint_manager(restore_path)
+    restore_step = restore_mngr.latest_step()
+    print(f"Loading checkpoint {restore_path}/{restore_step}")
+    abstract_state, static = eqx.partition(neural_network, eqx.is_array_like)
+    restored_state = mngr.standard_restore(restore_mngr, restore_step, abstract_state)
+    neural_network = eqx.combine(restored_state, static)
 
-# neural ode
-neural_network = model.ScaleMLP(
-    data_size=nspec,
-    width_size=10,
-    depth=4,
-    key=jax.random.PRNGKey(cfg["seed"]),
-)
-
-checkpointer = ocp.StandardCheckpointer()
-ckpt_path = Path("checkpoints_cache/fit_all_toy").absolute()
-# ckpt_path = ocp.test_utils.erase_and_create_empty(ckpt_path)
-ckpt_idx = 4
-
-# load checkpoint
-state, static = eqx.partition(neural_network, eqx.is_array_like)
-abstract_state = jax.tree.map(ocp.utils.to_shape_dtype_struct, state)
-restored_state = checkpointer.restore(ckpt_path / f"{ckpt_idx}", abstract_state)
-neural_network = eqx.combine(restored_state, static)
-
-params ["neural_network"] = neural_network
-b_dydt_nn = eqx.filter_vmap(
-    eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
-    in_axes=(None, 0, None)
-)(None, b_ys, params)
-
-b_dydt = b_dydt_finite
+    params ["neural_network"] = neural_network
+    b_dydt = eqx.filter_vmap(
+        eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
+        in_axes=(None, 0, None)
+    )(None, b_ys, params)
+elif cfg["dydt"] == "finite_diff":
+    b_dydt = jnp.gradient(b_ys, ts, axis=1)
+else:
+    assert False, f"{cfg["dydt"]} not defined"
 
 # Model ========================================================================
 
 var_names = ["k_static", "ro2_coef"]
 ground_truth = {k: v for k, v in params.items() if k in var_names}
 fix_params = {k: v for k, v in params.items() if k not in var_names}
-var_params = jax.tree.map(jnp.zeros_like, ground_truth)
+var_params = jax.tree.map(jnp.zeros_like, ground_truth)  # NOTE: log scale
 print(var_params)
 
 def loss_fn(var_params, fix_params, dydt, ys):
@@ -126,10 +127,10 @@ def opt_step(
     dydt,
     ys,
 ):
-    loss_val, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, dydt, ys)
-    updates, opt_state = optim.update(grads, opt_state, var_params, value=loss_val)
+    loss, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, dydt, ys)
+    updates, opt_state = optim.update(grads, opt_state, var_params, value=loss)
     new_var_params = eqx.apply_updates(var_params, updates)
-    return new_var_params, loss_val, opt_state
+    return new_var_params, loss, opt_state
 
 
 # Training =====================================================================
@@ -148,28 +149,19 @@ def train(var_params):
 
         bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
         for i in bar:
-            var_params, loss_val, opt_state = opt_step(
+            var_params, loss, opt_state = opt_step(
                 optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
             )
-            bar.set_postfix(
-                {
-                    "loss": f"{float(jnp.squeeze(loss_val)):.4e}",
-                }
-            )
+            bar.set_postfix({"loss": f"{float(jnp.squeeze(loss)):.4e}"})
 
-    with open("cache/est_rate_diff.pkl", "wb") as f:
-        pickle.dump({
-            "true": ground_truth,
-            "pred": jax.tree.map(jnp.exp, var_params),
-        }, f)
+            if cfg["save_dir"]:  # checkpoint
+                state = {"var_params": var_params, "opt_state": opt_state}
+                mngr.standard_save(ckpt_mngr, i, state, loss)
 
-train(var_params)
+    return var_params
 
-with open("cache/est_rate_diff.pkl", "rb") as f:
-    dump = pickle.load(f)
-ground_truth, pred = dump["true"], dump["pred"]
-print(ground_truth)
-print(pred)
+if cfg["train"]:
+    var_params = train(var_params)
 
 import schemes.toy_autoxidation.rates as rates
 def combine_static_ro2(tree):
@@ -179,13 +171,24 @@ def combine_static_ro2(tree):
     return combined
 
 
-import matplotlib.pyplot as plt
 combined_true = combine_static_ro2(ground_truth)
-combined_pred = combine_static_ro2(pred)
-fig, ax = plt.subplots(1,1)
-ax.scatter(jnp.arange(combined_true.shape[0]), combined_true, label="true", marker="x")
-ax.scatter(jnp.arange(combined_pred.shape[0]), combined_pred, label="pred", marker="+")
-ax.legend()
-ax.set_yscale("log")
-fig.tight_layout()
-fig.savefig("plots/est_rate_diff.pdf")
+combined_pred = combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+
+if cfg["save_dir"]:
+    fig, ax = plt.subplots(1,1)
+    ax.scatter(jnp.arange(combined_true.shape[0]), combined_true, label="true", marker="x")
+    ax.scatter(jnp.arange(combined_pred.shape[0]), combined_pred, label="pred", marker="+")
+    ax.legend()
+    ax.set_yscale("log")
+    fig.tight_layout()
+    fig.savefig(cfg["save_dir"] / "est_k.pdf")
+
+    np.savez(
+        cfg["save_dir"] / "est_k.npz",
+        truth=combined_true,
+        pred=combined_pred,
+    )
+
+if cfg["save_dir"]:
+    ckpt_mngr.wait_until_finished()
+    ckpt_mngr.close()
