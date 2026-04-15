@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jaxtyping
 import equinox as eqx
 import optax
-import orbax.checkpoint as ocp
 import tqdm
 
 jax.config.update("jax_enable_x64", True)
@@ -20,7 +19,7 @@ jax.config.update("jax_enable_x64", True)
 import model
 import data
 import manager as mngr
-from metrics import scale_mse, log_mse
+from metrics import scale_mse
 
 sys.path.append(str(Path.cwd()))
 import plots.plot as pp
@@ -73,7 +72,6 @@ var_params = {
 fix_params = {"solver": cfg["solver"], "scale": scale}
 
 
-
 def loss_fn_b(var_params, fix_params, ts, b_ys):
     params = {**var_params, **fix_params}
     ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
@@ -117,12 +115,16 @@ def train(var_params):
     for length, epochs in zip(length_strategy, epochs_strategy):
         print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-        bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
+        bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
         for i in bar:
             var_params, loss, opt_state = opt_step(
                 optimizer, opt_state, var_params, fix_params, ts, ys
             )
-            bar.set_postfix({"loss": f"{float(jnp.squeeze(loss)):.4e}",})
+            bar.set_postfix(
+                {
+                    "loss": f"{float(jnp.squeeze(loss)):.4e}",
+                }
+            )
 
             if cfg["save_dir"]:  # checkpoint
                 state, _ = eqx.partition(neural_network, eqx.is_array_like)
@@ -137,6 +139,7 @@ def train(var_params):
                 fig.savefig(cfg["save_dir"] / "traj_fit.pdf")
 
     return var_params
+
 
 if cfg["train"]:
     var_params = train(var_params)

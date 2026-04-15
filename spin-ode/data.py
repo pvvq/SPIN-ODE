@@ -3,7 +3,6 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import diffrax as dfx
 import numpy as np
 
 jax.config.update("jax_enable_x64", True)
@@ -11,7 +10,7 @@ FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 
 KPPAX_PATH = Path("KPPax")
 sys.path.insert(0, str(KPPAX_PATH))
-from stoicm import Stoicm, StoicmSplitSP, parse_kpp_dump
+from stoicm import StoicmSplitSP, parse_kpp_dump
 from rate_law import log_rate_law_SP
 import model
 
@@ -87,7 +86,7 @@ def load_toy_dataset(target_spc_names):
 
     data_list = []
     for i in range(10):
-        data_list.append(np.loadtxt(folder / f"dataset{i+1}.csv", delimiter=","))
+        data_list.append(np.loadtxt(folder / f"dataset{i + 1}.csv", delimiter=","))
 
     dataset = np.stack(data_list, 0)  # [B, spc, time]
 
@@ -97,6 +96,7 @@ def load_toy_dataset(target_spc_names):
     dataset = dataset[:, reorder]
 
     return jnp.transpose(jnp.asarray(dataset), (0, 2, 1))  # [B, time, spc]
+
 
 def add_normal_noise(a: jax.Array, factor, key):
     return a * (1.0 + jax.random.normal(key, a.shape) * factor)

@@ -11,14 +11,34 @@ from orbax.checkpoint.checkpoint_managers import save_decision_policy as save_pl
 
 def parse_cmd_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", "-c", type=str, required=True, help="path to YAML config")
-    parser.add_argument("--target", "-t", type=str, default="default", help="target in YAML config")
-    parser.add_argument("--train", action=argparse.BooleanOptionalAction, default=True, help="enable training")
-    parser.add_argument("--infer", action=argparse.BooleanOptionalAction, default=True, help="enable inference")
-    parser.add_argument("--save_dir", "-s", type=str, help="dir to save logs and checkpoints (erase if exist)")
+    parser.add_argument(
+        "--config", "-c", type=str, required=True, help="path to YAML config"
+    )
+    parser.add_argument(
+        "--target", "-t", type=str, default="default", help="target in YAML config"
+    )
+    parser.add_argument(
+        "--train",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable training",
+    )
+    parser.add_argument(
+        "--infer",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable inference",
+    )
+    parser.add_argument(
+        "--save_dir",
+        "-s",
+        type=str,
+        help="dir to save logs and checkpoints (erase if exist)",
+    )
     parser.add_argument("--redirect", "-r", type=str, help="file to redirect stdout")
     args = parser.parse_args()
     return args
+
 
 def load_config():
     args = parse_cmd_args()
@@ -46,6 +66,7 @@ def load_config():
 
     return config_dict
 
+
 def get_checkpoint_manager(ckpt_dir, interval=1, keep=1, get_metric_fn=lambda m: m):
     # remember to call ckpt_mngr.wait_until_finished(); ckpt_mngr.close()
     return ocp.CheckpointManager(
@@ -56,13 +77,16 @@ def get_checkpoint_manager(ckpt_dir, interval=1, keep=1, get_metric_fn=lambda m:
                 policies=[
                     prsv_plcy.LatestN(n=keep),
                     prsv_plcy.BestN(get_metric_fn=get_metric_fn, reverse=False, n=1),
-                ]),
+                ]
+            ),
         ),
     )
+
 
 # use new args API
 def standard_save(ckpt_mngr, step, state, metrics):
     ckpt_mngr.save(step, args=ocp.args.StandardSave(state), metrics=metrics)
+
 
 def standard_restore(ckpt_mngr, step, abstract_state):
     # ckpt_mngr.all_steps(); ckpt_mngr.latest_step(); ckpt_mngr.best_step()

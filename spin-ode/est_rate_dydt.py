@@ -6,7 +6,6 @@ Usage: python est_rate_dydt.py -h
 
 import sys
 from pathlib import Path
-import pickle
 
 import jax
 import jax.numpy as jnp
@@ -22,10 +21,9 @@ jax.config.update("jax_enable_x64", True)
 import model
 import data
 import manager as mngr
-from metrics import scale_mse, log_mse
+from metrics import scale_mse
 
 sys.path.append(str(Path.cwd()))
-import plots.plot as pp
 
 FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 
@@ -84,15 +82,15 @@ if cfg["dydt"] == "neural_ode":
     restored_state = mngr.standard_restore(restore_mngr, restore_step, abstract_state)
     neural_network = eqx.combine(restored_state, static)
 
-    params ["neural_network"] = neural_network
+    params["neural_network"] = neural_network
     b_dydt = eqx.filter_vmap(
         eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
-        in_axes=(None, 0, None)
+        in_axes=(None, 0, None),
     )(None, b_ys, params)
 elif cfg["dydt"] == "finite_diff":
     b_dydt = jnp.gradient(b_ys, ts, axis=1)
 else:
-    assert False, f"{cfg["dydt"]} not defined"
+    assert False, f"{cfg['dydt']} not defined"
 
 # Model ========================================================================
 
@@ -101,6 +99,7 @@ ground_truth = {k: v for k, v in params.items() if k in var_names}
 fix_params = {k: v for k, v in params.items() if k not in var_names}
 var_params = jax.tree.map(jnp.zeros_like, ground_truth)  # NOTE: log scale
 print(var_params)
+
 
 def loss_fn(var_params, fix_params, dydt, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
@@ -147,7 +146,7 @@ def train(var_params):
     for length, epochs in zip(length_strategy, epochs_strategy):
         print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-        bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
+        bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
         for i in bar:
             var_params, loss, opt_state = opt_step(
                 optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
@@ -160,13 +159,18 @@ def train(var_params):
 
     return var_params
 
+
 if cfg["train"]:
     var_params = train(var_params)
 
 import schemes.toy_autoxidation.rates as rates
+
+
 def combine_static_ro2(tree):
     combined = jnp.zeros(rates.NREACT)
-    combined = combined.at[rates._STATIC_DYN_INDICES].set(tree["k_static"][rates._STATIC_DYN_INDICES])
+    combined = combined.at[rates._STATIC_DYN_INDICES].set(
+        tree["k_static"][rates._STATIC_DYN_INDICES]
+    )
     combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
     return combined
 
@@ -175,9 +179,13 @@ combined_true = combine_static_ro2(ground_truth)
 combined_pred = combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
 if cfg["save_dir"]:
-    fig, ax = plt.subplots(1,1)
-    ax.scatter(jnp.arange(combined_true.shape[0]), combined_true, label="true", marker="x")
-    ax.scatter(jnp.arange(combined_pred.shape[0]), combined_pred, label="pred", marker="+")
+    fig, ax = plt.subplots(1, 1)
+    ax.scatter(
+        jnp.arange(combined_true.shape[0]), combined_true, label="true", marker="x"
+    )
+    ax.scatter(
+        jnp.arange(combined_pred.shape[0]), combined_pred, label="pred", marker="+"
+    )
     ax.legend()
     ax.set_yscale("log")
     fig.tight_layout()

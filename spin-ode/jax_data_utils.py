@@ -16,14 +16,16 @@ import jax.numpy as jnp
 # Dataset protocol
 # ---------------------------------------------------------------------------
 
+
 class Dataset(Protocol):
     def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> Any: ...   # returns a pytree
+    def __getitem__(self, index: int) -> Any: ...  # returns a pytree
 
 
 # ---------------------------------------------------------------------------
 # Collate: list[pytree]  ->  batched pytree
 # ---------------------------------------------------------------------------
+
 
 def collate(items: list[Any]) -> Any:
     """
@@ -40,6 +42,7 @@ def collate(items: list[Any]) -> Any:
 # ---------------------------------------------------------------------------
 # JAXDataLoader
 # ---------------------------------------------------------------------------
+
 
 class JAXDataLoader:
     """
@@ -60,17 +63,17 @@ class JAXDataLoader:
         drop_last: bool = False,
         key: Optional[jax.Array] = None,
     ) -> None:
-        self.dataset    = dataset
+        self.dataset = dataset
         self.batch_size = batch_size
-        self.shuffle    = shuffle
-        self.drop_last  = drop_last
-        self._key       = key if key is not None else jax.random.PRNGKey(0)
-        self._n         = len(dataset)
+        self.shuffle = shuffle
+        self.drop_last = drop_last
+        self._key = key if key is not None else jax.random.PRNGKey(0)
+        self._n = len(dataset)
 
     def __len__(self) -> int:
         if self.drop_last:
             return self._n // self.batch_size
-        return -(-self._n // self.batch_size)           # ceil
+        return -(-self._n // self.batch_size)  # ceil
 
     def __iter__(self) -> Generator[Any, None, None]:
         if self.shuffle:
@@ -85,8 +88,8 @@ class JAXDataLoader:
             if self.drop_last and len(batch_idx) < self.batch_size:
                 break
 
-            items = [self.dataset[i] for i in batch_idx]   # list of pytrees
-            yield collate(items)                            # one batched pytree
+            items = [self.dataset[i] for i in batch_idx]  # list of pytrees
+            yield collate(items)  # one batched pytree
 
     def forever(self) -> Generator[Any, None, None]:
         while True:
@@ -101,18 +104,19 @@ if __name__ == "__main__":
 
     class ToyDataset:
         """Each item is a dict-pytree {"x": (4,), "label": ()}."""
+
         def __init__(self, n=20):
             key = jax.random.PRNGKey(0)
             self._x = jax.random.normal(key, (n, 4))
             self._y = jnp.arange(n)
 
-        def __len__(self): return len(self._x)
+        def __len__(self):
+            return len(self._x)
 
         def __getitem__(self, i):
             return {"x": self._x[i], "label": self._y[i]}
 
-    loader = JAXDataLoader(ToyDataset(20), batch_size=6,
-                           shuffle=True, drop_last=True)
+    loader = JAXDataLoader(ToyDataset(20), batch_size=6, shuffle=True, drop_last=True)
 
     print(f"batches/epoch: {len(loader)}")
     for batch in loader:

@@ -6,7 +6,6 @@ Usage: python est_rate_traj.py -h
 
 import sys
 from pathlib import Path
-import pickle
 
 import jax
 import jax.numpy as jnp
@@ -22,7 +21,7 @@ jax.config.update("jax_enable_x64", True)
 import model
 import data
 import manager as mngr
-from metrics import *
+from metrics import scale_mse, log_mse
 
 sys.path.append(str(Path.cwd()))
 import plots.plot as pp
@@ -33,9 +32,7 @@ cfg = mngr.load_config()
 key = jax.random.PRNGKey(cfg["seed"])
 if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
-        cfg["save_dir"] / "checkpoints",
-        cfg["ckpt_interval"],
-        cfg["ckpt_keep"]
+        cfg["save_dir"] / "checkpoints", cfg["ckpt_interval"], cfg["ckpt_keep"]
     )
 
 # Data =========================================================================
@@ -82,35 +79,55 @@ fix_params = {k: v for k, v in params.items() if k not in var_names}
 
 # add random noise
 var_params = jax.tree.map(
-    lambda l: data.add_normal_noise(l, factor=1e-1, key=key),
-    ground_truth
+    lambda leaf: data.add_normal_noise(leaf, factor=1e-1, key=key), ground_truth
 )
 
 var_params = jax.tree.map(jnp.log, var_params)  # NOTE: log scale
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
 
+
 def combine_static_ro2(tree):
     combined = jnp.zeros(rates.NREACT)
-    combined = combined.at[rates._STATIC_DYN_INDICES].set(tree["k_static"][rates._STATIC_DYN_INDICES])
+    combined = combined.at[rates._STATIC_DYN_INDICES].set(
+        tree["k_static"][rates._STATIC_DYN_INDICES]
+    )
     combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
     return combined
+
 
 combined_true = combine_static_ro2(ground_truth)
 combined_init = combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
 
 def plot_k(combined_pred, path):
-    fig, ax = plt.subplots(1,1)
-    ax.scatter(jnp.arange(combined_true.shape[0]), combined_true/combined_true, label="true", marker="x")
-    ax.scatter(jnp.arange(combined_init.shape[0]), combined_init/combined_true, label="init", marker=".")
-    ax.scatter(jnp.arange(combined_pred.shape[0]), combined_pred/combined_true, label="pred", marker="+")
+    fig, ax = plt.subplots(1, 1)
+    ax.scatter(
+        jnp.arange(combined_true.shape[0]),
+        combined_true / combined_true,
+        label="true",
+        marker="x",
+    )
+    ax.scatter(
+        jnp.arange(combined_init.shape[0]),
+        combined_init / combined_true,
+        label="init",
+        marker=".",
+    )
+    ax.scatter(
+        jnp.arange(combined_pred.shape[0]),
+        combined_pred / combined_true,
+        label="pred",
+        marker="+",
+    )
     ax.legend()
     ax.set_yscale("log")
     fig.tight_layout()
     fig.savefig(path)
 
+
 if cfg["save_dir"]:
     plot_k(combined_init, cfg["save_dir"] / "est_k_init.pdf")
+
 
 def loss_fn(var_params, fix_params, ts, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
@@ -131,7 +148,9 @@ def opt_step(
     ys,
 ):
     loss, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, ts, ys)
-    grads = jax.tree.map(lambda g, m: jnp.where(m, g, 0.0), grads, fix_params["opt_mask"])
+    grads = jax.tree.map(
+        lambda g, m: jnp.where(m, g, 0.0), grads, fix_params["opt_mask"]
+    )
     updates, opt_state = optim.update(grads, opt_state, var_params, value=loss)
     new_var_params = eqx.apply_updates(var_params, updates)
     return new_var_params, loss, opt_state
@@ -153,7 +172,7 @@ def train(var_params):
     for length, epochs in zip(length_strategy, epochs_strategy):
         print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-        bar = tqdm.tqdm(range(0, epochs), desc=f"Epochs", initial=0)
+        bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
         for i in bar:
             var_params, loss, opt_state = opt_step(
                 optimizer, opt_state, var_params, fix_params, ts, b_ys[0]
@@ -170,7 +189,10 @@ def train(var_params):
             # testing
             if cfg["save_dir"] and i % cfg["test_interval"] == 0:
                 traj_pred = model.solve(
-                    {**jax.tree.map(jnp.exp, var_params), **fix_params}, ts, ys[0], model.kinetic_ode
+                    {**jax.tree.map(jnp.exp, var_params), **fix_params},
+                    ts,
+                    ys[0],
+                    model.kinetic_ode,
                 )
                 fig = pp.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
                 fig.savefig(cfg["save_dir"] / "est_traj.pdf")
@@ -182,6 +204,7 @@ def train(var_params):
                 mngr.standard_save(ckpt_mngr, i, state, loss)
 
     return var_params
+
 
 if cfg["train"]:
     var_params = train(var_params)
