@@ -4,7 +4,6 @@ Estimate rate coefficient by gradient descent of time derivative loss
 Usage: python est_rate_dydt.py -h
 """
 
-import sys
 from pathlib import Path
 
 import jax
@@ -14,7 +13,6 @@ import equinox as eqx
 import optax
 import tqdm
 import numpy as np
-import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)
 
@@ -22,8 +20,7 @@ import model
 import data
 import manager as mngr
 from metrics import scale_mse
-
-sys.path.append(str(Path.cwd()))
+import plot
 
 FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 
@@ -100,6 +97,9 @@ fix_params = {k: v for k, v in params.items() if k not in var_names}
 var_params = jax.tree.map(jnp.zeros_like, ground_truth)  # NOTE: log scale
 print(var_params)
 
+combined_true = data.combine_static_ro2(ground_truth)
+combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+
 
 def loss_fn(var_params, fix_params, dydt, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
@@ -163,32 +163,13 @@ def train(var_params):
 if cfg["train"]:
     var_params = train(var_params)
 
-import schemes.toy_autoxidation.rates as rates
-
-
-def combine_static_ro2(tree):
-    combined = jnp.zeros(rates.NREACT)
-    combined = combined.at[rates._STATIC_DYN_INDICES].set(
-        tree["k_static"][rates._STATIC_DYN_INDICES]
-    )
-    combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
-    return combined
-
-
-combined_true = combine_static_ro2(ground_truth)
-combined_pred = combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
 if cfg["save_dir"]:
-    fig, ax = plt.subplots(1, 1)
-    ax.scatter(
-        jnp.arange(combined_true.shape[0]), combined_true, label="true", marker="x"
+    fig = plot.plot_k(
+        [combined_true, combined_pred, combined_init],
+        ["Ground truth", "Estimated", "Initial"],
     )
-    ax.scatter(
-        jnp.arange(combined_pred.shape[0]), combined_pred, label="pred", marker="+"
-    )
-    ax.legend()
-    ax.set_yscale("log")
-    fig.tight_layout()
     fig.savefig(cfg["save_dir"] / "est_k.pdf")
 
     np.savez(

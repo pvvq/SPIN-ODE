@@ -22,7 +22,7 @@ import manager as mngr
 from metrics import scale_mse
 
 sys.path.append(str(Path.cwd()))
-import plots.plot as pp
+import plot
 
 FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 cfg = mngr.load_config()
@@ -135,7 +135,7 @@ def train(var_params):
                     {**var_params, **fix_params}, ts, ys[0], model.neural_ode
                 )
                 err_traj = scale_mse(traj_pred, ys, scale["yScale"])
-                fig = pp.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
+                fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
                 fig.savefig(cfg["save_dir"] / "traj_fit.pdf")
 
     return var_params

@@ -36,6 +36,7 @@ toy_ts = jnp.arange(0, 5.1, 0.1, dtype=FTYPE)
 
 
 def get_scheme(sch_name: str):
+    global rates, ro2
     if sch_name == "pollu":
         import schemes.pollu.rates as rates
         import schemes.pollu.ro2 as ro2
@@ -58,7 +59,7 @@ def get_scheme(sch_name: str):
     for k, v in C0.items():
         y0 = y0.at[kpp_dump["SPC_NAMES"].index(k)].set(v)
     # for robertson and pollu, ro2 is redundant
-    k_static, ro2_coef = rates.update_rconst(TEMP=288)
+    k_static, ro2_coef = rates.update_rconst(TEMP=jnp.array(288., dtype=FTYPE))
 
     kinetics = {
         "stoicm": stoicm_split,
@@ -70,6 +71,15 @@ def get_scheme(sch_name: str):
     }
 
     return kpp_dump, kinetics, ts, y0
+
+
+def combine_static_ro2(tree):
+    combined = jnp.zeros(rates.NREACT)
+    combined = combined.at[rates._STATIC_DYN_INDICES].set(
+        tree["k_static"][rates._STATIC_DYN_INDICES]
+    )
+    combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
+    return combined
 
 
 def get_ys(params, ts, y0):
