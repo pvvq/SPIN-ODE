@@ -40,7 +40,7 @@ class ScaleMLP(eqx.Module):
 
 
 def neural_ode(t, y, args):
-    nn = args["neural_network"]
+    nn = args["nn"]
     return nn(y, args["scale"])
 
 

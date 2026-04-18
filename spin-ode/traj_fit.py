@@ -68,23 +68,21 @@ neural_network = model.ScaleMLP(
 )
 
 var_params = {
-    "neural_network": neural_network,
+    "nn": neural_network,
 }
 fix_params = {"solver": cfg["solver"], "scale": scale}
 
 
-def loss_fn_b(var_params, fix_params, ts, b_ys):
+def pred_ys(params, ts, y0):
+    return model.solve(params, ts, y0, model.neural_ode)
+
+
+def loss_fn(var_params, fix_params, ts, b_ys):
     params = {**var_params, **fix_params}
-    ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-        params, ts, b_ys[:, 0], model.neural_ode
+    b_ys_pred = eqx.filter_vmap(pred_ys, in_axes=(None, None, 0))(
+        params, ts, b_ys[:, 0]
     )
-    return scale_mse(ys_pred, b_ys, params["scale"]["yScale"])
-
-
-def loss_fn(var_params, fix_params, ts, ys):
-    params = {**var_params, **fix_params}
-    ys_pred = model.solve(params, ts, ys[0], model.neural_ode)
-    return scale_mse(ys_pred, ys, params["scale"]["yScale"])
+    return scale_mse(b_ys_pred, b_ys, params["scale"]["yScale"])
 
 
 @eqx.filter_jit
@@ -102,55 +100,64 @@ def opt_step(
     return new_var_params, loss, opt_state
 
 
+def _plot_ys(ys_pred, fname):
+    fig = plot.plot_series(y=ys_pred, t=ts, yy=ys, tt=ts)
+    fig.savefig(cfg["save_dir"] / fname)
+    plot.plt.close(fig)
+
+
 # Training =====================================================================
-def train(var_params):
-    optimizer = optax.chain(
-        optax.clip(10),
-        optax.adamw(cfg["learning_rate"]),
-        # optax.contrib.reduce_on_plateau(factor=0.5, patience=100),
-    )
-    opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
+optimizer = optax.chain(
+    optax.clip(10),
+    optax.adamw(cfg["learning_rate"]),
+    # optax.contrib.reduce_on_plateau(factor=0.5, patience=100),
+)
+opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
-    length_strategy = [1.0]
-    epochs_strategy = [cfg["epochs"]]
-    for length, epochs in zip(length_strategy, epochs_strategy):
-        print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
+length_strategy = [1.0]
+epochs_strategy = [cfg["epochs"]]
 
-        bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
-        for i in bar:
-            var_params, loss, opt_state = opt_step(
-                optimizer, opt_state, var_params, fix_params, ts, ys
-            )
-            bar.set_postfix(
-                {
-                    "loss": f"{float(jnp.squeeze(loss)):.4e}",
-                }
-            )
-
-            if cfg["save_dir"]:  # checkpoint
-                state, _ = eqx.partition(neural_network, eqx.is_array_like)
-                mngr.standard_save(ckpt_mngr, i, state, loss)
-
-            if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
-                traj_pred = model.solve(
-                    {**var_params, **fix_params}, ts, ys[0], model.neural_ode
-                )
-                err_traj = scale_mse(traj_pred, ys, scale["yScale"])
-
-                def _plot():
-                    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
-                    fig.savefig(cfg["save_dir"] / "traj_fit.pdf")
-                    plot.plt.close(fig)
-                async_worker.submit(_plot)
-
-    return var_params
+if not cfg["train"]:
+    epochs_strategy = []
 
 
-if cfg["train"]:
-    var_params = train(var_params)
+for length, epochs in zip(length_strategy, epochs_strategy):
+    print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
+
+    bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
+    for i in bar:
+        var_params, loss, opt_state = opt_step(
+            optimizer, opt_state, var_params, fix_params, ts, b_ys
+        )
+        bar.set_postfix(
+            {
+                "loss": f"{float(jnp.squeeze(loss)):.4e}",
+            }
+        )
+
+        if cfg["save_dir"]:  # checkpoint
+            state, _ = eqx.partition(var_params["nn"], eqx.is_array_like)
+            mngr.standard_save(ckpt_mngr, i, state, loss)
+
+        if cfg["save_dir"] and (i+1) % cfg["test_interval"] == 0:  # Testing
+            ys_pred = pred_ys({**var_params, **fix_params}, ts, ys[0])
+            async_worker.submit(_plot_ys, ys_pred, f"traj_fit_{i}.pdf")
+
+
+if cfg["infer"]:
+    assert cfg["save_dir"], "must provide save_dir to load checkpoint"
+    # load checkpoint
+    restore_step = ckpt_mngr.best_step()
+    print(f"Inference using checkpoint {cfg["save_dir"]}/{restore_step}")
+    abstract_state, static = eqx.partition(var_params["nn"], eqx.is_array_like)
+    restored_state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
+    var_params["nn"] = eqx.combine(restored_state, static)
+
+    ys_pred = pred_ys({**var_params, **fix_params}, ts, ys[0])
+    _plot_ys(ys_pred, "traj_fit.pdf")
 
 if cfg["save_dir"]:
-    # finalise
+    print("Finalising")
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

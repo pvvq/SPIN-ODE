@@ -34,7 +34,7 @@ def parse_cmd_args():
         "--save_dir",
         "-s",
         type=str,
-        help="dir to save logs and checkpoints (erase if exist)",
+        help="dir to save logs and checkpoints",
     )
     parser.add_argument("--redirect", "-r", type=str, help="file to redirect stdout")
     args = parser.parse_args()
@@ -56,7 +56,7 @@ def load_config():
 
     if args.save_dir:
         save_dir = Path(args.save_dir).absolute()
-        ocp.test_utils.erase_and_create_empty(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
         copyfile(args.config, save_dir / Path(args.config).name)
         config_dict["save_dir"] = save_dir
     else:

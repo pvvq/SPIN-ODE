@@ -97,16 +97,6 @@ def _plot_k(combined_pred):
     plot.plt.close(fig)
 
 
-def _save_k(var_params, filename):
-    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-    np.savez(
-        cfg["save_dir"] / "est_k.npz",
-        truth=combined_true,
-        pred=combined_pred,
-        init=combined_init
-    )
-
-
 def loss_fn(var_params, fix_params, ts, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
     params = {**var_params, **fix_params}
@@ -135,67 +125,75 @@ def opt_step(
 
 
 # Training =====================================================================
+optimizer = optax.chain(
+    optax.clip(1.0),  # avoid huge gradient on chain init reaction
+    optax.adam(cfg["learning_rate"]),
+    optax.contrib.reduce_on_plateau(factor=0.5, patience=200),
+)
+opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
+
+length_strategy = [1.0]
+epochs_strategy = [cfg["epochs"]] 
+
+if not cfg["train"]:
+    epochs_strategy = []
+
+for length, epochs in zip(length_strategy, epochs_strategy):
+    print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
+
+    bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
+    for i in bar:
+        var_params, loss, opt_state = opt_step(
+            optimizer, opt_state, var_params, fix_params, ts, b_ys[0]
+        )
+        combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+        k_diff = log_mse(combined_pred, combined_true, eps=1e-16)
+        bar.set_postfix(
+            {
+                "loss": f"{float(jnp.squeeze(loss)):.4e}",
+                "k_diff": f"{float(jnp.squeeze(k_diff)):.4e}",
+            }
+        )
+
+        if cfg["save_dir"] and (i+1) % cfg["test_interval"] == 0:  # testing
+            traj_pred = model.solve(
+                {**jax.tree.map(jnp.exp, var_params), **fix_params},
+                ts,
+                ys[0],
+                model.kinetic_ode,
+            )
+
+            def _plot_y():
+                fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
+                fig.savefig(cfg["save_dir"] / "est_traj.pdf")
+                plot.plt.close(fig)
+            
+            async_worker.submit(_plot_y)
+            async_worker.submit(_plot_k, combined_pred)
+
+        if cfg["save_dir"]:  # checkpoint
+            state = {"var_params": var_params, "opt_state": opt_state}
+            mngr.standard_save(ckpt_mngr, i, state, loss)
 
 
-def train(var_params):
-    optimizer = optax.chain(
-        optax.clip(1.0),  # avoid huge gradient on chain init reaction
-        optax.adam(cfg["learning_rate"]),
-        optax.contrib.reduce_on_plateau(factor=0.5, patience=200),
+if cfg["infer"]:
+    assert cfg["save_dir"], "must provide save_dir to load checkpoint"
+    restore_step = ckpt_mngr.best_step()
+    print(f"Inference using checkpoint {cfg["save_dir"]}/{restore_step}")
+    abstract_state = {"var_params": var_params, "opt_state": opt_state}
+    state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
+
+    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, state["var_params"]))
+    _plot_k(combined_pred)
+    np.savez(
+        cfg["save_dir"] / "est_k.npz",
+        truth=combined_true,
+        pred=combined_pred,
+        init=combined_init
     )
-    opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
-
-    length_strategy = [1.0]
-    epochs_strategy = [cfg["epochs"]]
-    for length, epochs in zip(length_strategy, epochs_strategy):
-        print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
-
-        bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
-        for i in bar:
-            var_params, loss, opt_state = opt_step(
-                optimizer, opt_state, var_params, fix_params, ts, b_ys[0]
-            )
-            combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-            k_diff = log_mse(combined_pred, combined_true, eps=1e-16)
-            bar.set_postfix(
-                {
-                    "loss": f"{float(jnp.squeeze(loss)):.4e}",
-                    "k_diff": f"{float(jnp.squeeze(k_diff)):.4e}",
-                }
-            )
-
-            if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
-                traj_pred = model.solve(
-                    {**jax.tree.map(jnp.exp, var_params), **fix_params},
-                    ts,
-                    ys[0],
-                    model.kinetic_ode,
-                )
-
-                def _plot_y():
-                    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
-                    fig.savefig(cfg["save_dir"] / "est_traj.pdf")
-                    plot.plt.close(fig)
-                
-                async_worker.submit(_plot_y)
-                async_worker.submit(_plot_k, combined_pred)
-
-            if cfg["save_dir"]:  # checkpoint
-                state = {"var_params": var_params, "opt_state": opt_state}
-                mngr.standard_save(ckpt_mngr, i, state, loss)
-                async_worker.submit(_save_k, var_params)
-
-    return var_params
-
-
-if cfg["train"]:
-    var_params = train(var_params)
 
 if cfg["save_dir"]:
-    _plot_k(var_params)
-    _save_k(var_params)
-
-    # finalise
+    print("Finalising")
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

@@ -72,15 +72,16 @@ if cfg["dydt"] == "neural_ode":
     )
 
     # load checkpoint
+    # TODO: now retore old state, which is nn only, retrain and store use nn+opt_step
     restore_path = Path(cfg["neural_ode_ckpt"]).absolute()
     restore_mngr = mngr.get_checkpoint_manager(restore_path)
-    restore_step = restore_mngr.latest_step()
+    restore_step = restore_mngr.best_step()
     print(f"Loading checkpoint {restore_path}/{restore_step}")
     abstract_state, static = eqx.partition(neural_network, eqx.is_array_like)
     restored_state = mngr.standard_restore(restore_mngr, restore_step, abstract_state)
     neural_network = eqx.combine(restored_state, static)
 
-    params["neural_network"] = neural_network
+    params["nn"] = neural_network
     b_dydt = eqx.filter_vmap(
         eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
         in_axes=(None, 0, None),
@@ -110,28 +111,20 @@ def _plot_k(var_params):
     fig.savefig(cfg["save_dir"] / "est_k.pdf")
     plot.plt.close(fig)
 
-def _save_k(var_params):
-    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-    np.savez(
-        cfg["save_dir"] / "est_k.npz",
-        truth=combined_true,
-        pred=combined_pred,
-        init=combined_init
-    )
 
 def loss_fn(var_params, fix_params, dydt, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
     params = {**var_params, **fix_params}
 
-    def _pred(params, y):
+    def _pred_dydt(params, y):
         kinetic_dydt = model.kinetic_ode(None, y, params)
         return kinetic_dydt
 
-    pred_dydt = eqx.filter_vmap(
-        eqx.filter_vmap(_pred, in_axes=(None, 0)),
+    dydt_pred = eqx.filter_vmap(
+        eqx.filter_vmap(_pred_dydt, in_axes=(None, 0)),
         in_axes=(None, 0),
     )(params, ys)
-    loss = scale_mse(dydt, pred_dydt, params["scale"]["ytScale"])
+    loss = scale_mse(dydt, dydt_pred, params["scale"]["ytScale"])
     return loss
 
 
@@ -151,44 +144,57 @@ def opt_step(
 
 
 # Training =====================================================================
-def train(var_params):
-    optimizer = optax.chain(
-        optax.clip(10),
-        optax.adamw(cfg["learning_rate"]),
-        # optax.contrib.reduce_on_plateau(factor=0.5, patience=100),
+optimizer = optax.chain(
+    optax.clip(10),
+    optax.adamw(cfg["learning_rate"]),
+    # optax.contrib.reduce_on_plateau(factor=0.5, patience=100),
+)
+opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
+
+
+length_strategy = [1.0]
+epochs_strategy = [cfg["epochs"]]
+
+if not cfg["train"]:
+    epochs_strategy = []
+
+for length, epochs in zip(length_strategy, epochs_strategy):
+    print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
+
+    bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
+    for i in bar:
+        var_params, loss, opt_state = opt_step(
+            optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
+        )
+        bar.set_postfix({"loss": f"{float(jnp.squeeze(loss)):.4e}"})
+
+        if cfg["save_dir"]:  # checkpoint
+            state = {"var_params": var_params, "opt_state": opt_state}
+            mngr.standard_save(ckpt_mngr, i, state, loss)
+
+        if cfg["save_dir"] and (i+1) % cfg["test_interval"] == 0:  # Testing
+            async_worker.submit(_plot_k, var_params)
+
+
+if cfg["infer"]:
+    assert cfg["save_dir"], "must provide save_dir to load checkpoint"
+    restore_step = ckpt_mngr.best_step()
+    print(f"Inference using checkpoint {cfg["save_dir"]}/{restore_step}")
+    abstract_state = {"var_params": var_params, "opt_state": opt_state}
+    state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
+
+    _plot_k(state["var_params"])
+
+    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, state["var_params"]))
+    np.savez(
+        cfg["save_dir"] / "est_k.npz",
+        truth=combined_true,
+        pred=combined_pred,
+        init=combined_init
     )
-    opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
-
-    length_strategy = [1.0]
-    epochs_strategy = [cfg["epochs"]]
-    for length, epochs in zip(length_strategy, epochs_strategy):
-        print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
-
-        bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
-        for i in bar:
-            var_params, loss, opt_state = opt_step(
-                optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
-            )
-            bar.set_postfix({"loss": f"{float(jnp.squeeze(loss)):.4e}"})
-
-            if cfg["save_dir"]:  # checkpoint
-                state = {"var_params": var_params, "opt_state": opt_state}
-                mngr.standard_save(ckpt_mngr, i, state, loss)
-
-            if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
-                async_worker.submit(_plot, var_params)
-
-    return var_params
-
-
-if cfg["train"]:
-    var_params = train(var_params)
 
 if cfg["save_dir"]:
-    _plot_k(var_params)
-    _save_k(var_params)
-
-    # finalise
+    print("Finalising")
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()
