@@ -31,6 +31,7 @@ if cfg["save_dir"]:
         cfg["ckpt_interval"],
         cfg["ckpt_keep"],
     )
+    async_worker = mngr.get_async_worker(10)
 
 # Data =========================================================================
 
@@ -100,6 +101,23 @@ print(var_params)
 combined_true = data.combine_static_ro2(ground_truth)
 combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
+def _plot_k(var_params):
+    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+    fig = plot.plot_k(
+        [combined_pred, combined_init, combined_true],
+        ["Estimated", "Initial", "Ground truth"],
+    )
+    fig.savefig(cfg["save_dir"] / "est_k.pdf")
+    plot.plt.close(fig)
+
+def _save_k(var_params):
+    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+    np.savez(
+        cfg["save_dir"] / "est_k.npz",
+        truth=combined_true,
+        pred=combined_pred,
+        init=combined_init
+    )
 
 def loss_fn(var_params, fix_params, dydt, ys):
     var_params = jax.tree.map(jnp.exp, var_params)
@@ -157,27 +175,20 @@ def train(var_params):
                 state = {"var_params": var_params, "opt_state": opt_state}
                 mngr.standard_save(ckpt_mngr, i, state, loss)
 
+            if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
+                async_worker.submit(_plot, var_params)
+
     return var_params
 
 
 if cfg["train"]:
     var_params = train(var_params)
 
-combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-
 if cfg["save_dir"]:
-    fig = plot.plot_k(
-        [combined_true, combined_pred, combined_init],
-        ["Ground truth", "Estimated", "Initial"],
-    )
-    fig.savefig(cfg["save_dir"] / "est_k.pdf")
+    _plot_k(var_params)
+    _save_k(var_params)
 
-    np.savez(
-        cfg["save_dir"] / "est_k.npz",
-        truth=combined_true,
-        pred=combined_pred,
-    )
-
-if cfg["save_dir"]:
+    # finalise
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
+    async_worker.shutdown()

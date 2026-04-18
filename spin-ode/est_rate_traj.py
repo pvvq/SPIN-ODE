@@ -27,6 +27,7 @@ if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
         cfg["save_dir"] / "checkpoints", cfg["ckpt_interval"], cfg["ckpt_keep"]
     )
+    async_worker = mngr.get_async_worker(4)
 
 # Data =========================================================================
 
@@ -81,6 +82,29 @@ fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
 
 combined_true = data.combine_static_ro2(ground_truth)
 combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+
+
+def _plot_k(combined_pred):
+    fig = plot.plot_k(
+        [
+            combined_pred / combined_true,
+            combined_init / combined_true,
+            combined_true / combined_true,
+        ],
+        ["Estimated", "Initial", "Ground truth"],
+    )
+    fig.savefig(cfg["save_dir"] / "est_k.pdf")
+    plot.plt.close(fig)
+
+
+def _save_k(var_params, filename):
+    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+    np.savez(
+        cfg["save_dir"] / "est_k.npz",
+        truth=combined_true,
+        pred=combined_pred,
+        init=combined_init
+    )
 
 
 def loss_fn(var_params, fix_params, ts, ys):
@@ -140,30 +164,26 @@ def train(var_params):
                 }
             )
 
-            # testing
-            if cfg["save_dir"] and i % cfg["test_interval"] == 0:
+            if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
                 traj_pred = model.solve(
                     {**jax.tree.map(jnp.exp, var_params), **fix_params},
                     ts,
                     ys[0],
                     model.kinetic_ode,
                 )
-                fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
-                fig.savefig(cfg["save_dir"] / "est_traj.pdf")
 
-                fig = plot.plot_k(
-                    [
-                        combined_pred / combined_true,
-                        combined_init / combined_true,
-                        combined_true / combined_true,
-                    ],
-                    ["Estimated", "Initial", "Ground truth"],
-                )
-                fig.savefig(cfg["save_dir"] / "est_k.pdf")
+                def _plot_y():
+                    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
+                    fig.savefig(cfg["save_dir"] / "est_traj.pdf")
+                    plot.plt.close(fig)
+                
+                async_worker.submit(_plot_y)
+                async_worker.submit(_plot_k, combined_pred)
 
             if cfg["save_dir"]:  # checkpoint
                 state = {"var_params": var_params, "opt_state": opt_state}
                 mngr.standard_save(ckpt_mngr, i, state, loss)
+                async_worker.submit(_save_k, var_params)
 
     return var_params
 
@@ -172,13 +192,10 @@ if cfg["train"]:
     var_params = train(var_params)
 
 if cfg["save_dir"]:
-    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-    np.savez(
-        cfg["save_dir"] / "est_k.npz",
-        truth=combined_true,
-        pred=combined_pred,
-    )
+    _plot_k(var_params)
+    _save_k(var_params)
 
-if cfg["save_dir"]:
+    # finalise
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
+    async_worker.shutdown()

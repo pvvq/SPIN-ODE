@@ -32,6 +32,7 @@ if cfg["save_dir"]:
         cfg["ckpt_interval"],
         cfg["ckpt_keep"],
     )
+    async_worker = mngr.get_async_worker()
 
 # Data =========================================================================
 
@@ -135,8 +136,12 @@ def train(var_params):
                     {**var_params, **fix_params}, ts, ys[0], model.neural_ode
                 )
                 err_traj = scale_mse(traj_pred, ys, scale["yScale"])
-                fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
-                fig.savefig(cfg["save_dir"] / "traj_fit.pdf")
+
+                def _plot():
+                    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
+                    fig.savefig(cfg["save_dir"] / "traj_fit.pdf")
+                    plot.plt.close(fig)
+                async_worker.submit(_plot)
 
     return var_params
 
@@ -145,5 +150,7 @@ if cfg["train"]:
     var_params = train(var_params)
 
 if cfg["save_dir"]:
+    # finalise
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
+    async_worker.shutdown()

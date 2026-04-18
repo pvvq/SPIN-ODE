@@ -3,6 +3,7 @@ import yaml
 import argparse
 from pathlib import Path
 from shutil import copyfile
+from concurrent.futures import ThreadPoolExecutor
 
 import orbax.checkpoint as ocp
 from orbax.checkpoint.checkpoint_managers import preservation_policy as prsv_plcy
@@ -91,3 +92,8 @@ def standard_save(ckpt_mngr, step, state, metrics):
 def standard_restore(ckpt_mngr, step, abstract_state):
     # ckpt_mngr.all_steps(); ckpt_mngr.latest_step(); ckpt_mngr.best_step()
     return ckpt_mngr.restore(step, args=ocp.args.StandardRestore(abstract_state))
+
+def get_async_worker(max_workers=1):
+    # async_worker.submit(Callable); async_worker.shutdown();
+    async_worker = ThreadPoolExecutor(max_workers=max_workers)
+    return async_worker
