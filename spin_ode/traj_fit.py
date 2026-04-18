@@ -34,9 +34,10 @@ if cfg["save_dir"]:
         cfg["ckpt_keep"],
     )
     async_worker = mngr.get_async_worker(6)
-    loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "loss.txt", async_worker)
+    (cfg["save_dir"] / "logs").mkdir(parents=True, exist_ok=True)
+    loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "logs" / "loss.txt", async_worker)
     grad_norm_logger = mngr.ScalarLogger(
-        cfg["save_dir"] / "grad_norm.txt", async_worker
+        cfg["save_dir"] / "logs" / "grad_norm.txt", async_worker
     )
 
 # Data =========================================================================
@@ -152,7 +153,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
             ys_pred = pred_ys({**var_params, **fix_params}, ts, ys[0])
-            async_worker.submit(_plot_ys, ys_pred, f"traj_fit_{i}.pdf")
+            async_worker.submit(_plot_ys, ys_pred, f"logs/traj_fit_{i}.pdf")
             loss_logger.flush()
             grad_norm_logger.flush()
 
@@ -161,7 +162,7 @@ if cfg["infer"]:
     assert cfg["save_dir"], "must provide save_dir to load checkpoint"
     # load checkpoint
     restore_step = ckpt_mngr.best_step()
-    print(f"Inference using checkpoint {cfg['save_dir']}/{restore_step}")
+    print(f"Inference using checkpoint {cfg['save_dir']}/checkpoints/{restore_step}")
     abstract_state, static = eqx.partition(var_params["nn"], eqx.is_array_like)
     restored_state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
     var_params["nn"] = eqx.combine(restored_state, static)

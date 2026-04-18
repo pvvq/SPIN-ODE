@@ -33,9 +33,10 @@ if cfg["save_dir"]:
         cfg["ckpt_keep"],
     )
     async_worker = mngr.get_async_worker(6)
-    loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "loss.txt", async_worker)
+    (cfg["save_dir"] / "logs").mkdir(parents=True, exist_ok=True)
+    loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "logs" / "loss.txt", async_worker)
     grad_norm_logger = mngr.ScalarLogger(
-        cfg["save_dir"] / "grad_norm.txt", async_worker
+        cfg["save_dir"] / "logs" / "grad_norm.txt", async_worker
     )
 
 # Data =========================================================================
@@ -108,13 +109,13 @@ combined_true = data.combine_static_ro2(ground_truth)
 combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
 
-def _plot_k(var_params):
+def _plot_k(var_params, fname):
     combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
     fig = plot.plot_k(
         [combined_pred, combined_init, combined_true],
         ["Estimated", "Initial", "Ground truth"],
     )
-    fig.savefig(cfg["save_dir"] / "est_k.pdf")
+    fig.savefig(cfg["save_dir"] / fname)
     plot.plt.close(fig)
 
 
@@ -184,7 +185,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             grad_norm_logger.log(i, grad_norm_val)
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
-            async_worker.submit(_plot_k, var_params)
+            async_worker.submit(_plot_k, var_params, f"logs/est_k_{i}.pdf")
             loss_logger.flush()
             grad_norm_logger.flush()
 
@@ -192,11 +193,11 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 if cfg["infer"]:
     assert cfg["save_dir"], "must provide save_dir to load checkpoint"
     restore_step = ckpt_mngr.best_step()
-    print(f"Inference using checkpoint {cfg['save_dir']}/{restore_step}")
+    print(f"Inference using checkpoint {cfg['save_dir']}/checkpoints/{restore_step}")
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
     state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
 
-    _plot_k(state["var_params"])
+    _plot_k(state["var_params"], "est_k.pdf")
 
     combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, state["var_params"]))
     np.savez(
