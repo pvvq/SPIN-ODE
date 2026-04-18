@@ -45,9 +45,6 @@ if cfg["save_dir"]:
 sch, kinetics, ts, y0 = data.get_scheme("toy")
 nspec = len(sch["SPC_NAMES"])
 
-# params = {**kinetics, 'solver': cfg['solver']}
-# ys = data.get_ys(params, ts, y0)
-
 b_ys = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
 # print(b_ys.shape)
 ys = b_ys[0]

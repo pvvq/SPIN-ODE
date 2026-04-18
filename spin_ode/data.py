@@ -12,7 +12,6 @@ KPPAX_PATH = Path("KPPax")
 sys.path.insert(0, str(KPPAX_PATH))
 from stoicm import StoicmSplitSP, parse_kpp_dump
 from rate_law import log_rate_law_SP
-import model
 
 
 pollu_C0 = {
@@ -59,7 +58,7 @@ def get_scheme(sch_name: str):
     for k, v in C0.items():
         y0 = y0.at[kpp_dump["SPC_NAMES"].index(k)].set(v)
     # for robertson and pollu, ro2 is redundant
-    k_static, ro2_coef = rates.update_rconst(TEMP=jnp.array(288., dtype=FTYPE))
+    k_static, ro2_coef = rates.update_rconst(TEMP=jnp.array(288.0, dtype=FTYPE))
 
     kinetics = {
         "stoicm": stoicm_split,
@@ -81,17 +80,16 @@ def combine_static_ro2(tree):
     combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
     return combined
 
+
 def split_static_ro2(combined):
     tree = {}
-    tree["k_static"] = jnp.zeros(rates.NREACT).at[rates._STATIC_DYN_INDICES].set(
-        tree["k_static"][rates._STATIC_DYN_INDICES]
+    tree["k_static"] = (
+        jnp.zeros(rates.NREACT)
+        .at[rates._STATIC_DYN_INDICES]
+        .set(combined[rates._STATIC_DYN_INDICES])
     )
     tree["ro2_coef"] = combined[rates._RO2_INDICES]
     return tree
-
-
-def get_ys(params, ts, y0):
-    return model.solve(params, ts, y0, model.kinetic_ode)
 
 
 TOY_DATASET_DIR = "dataset1-10/"
