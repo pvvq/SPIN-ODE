@@ -81,6 +81,14 @@ def combine_static_ro2(tree):
     combined = combined.at[rates._RO2_INDICES].set(tree["ro2_coef"])
     return combined
 
+def split_static_ro2(combined):
+    tree = {}
+    tree["k_static"] = jnp.zeros(rates.NREACT).at[rates._STATIC_DYN_INDICES].set(
+        tree["k_static"][rates._STATIC_DYN_INDICES]
+    )
+    tree["ro2_coef"] = combined[rates._RO2_INDICES]
+    return tree
+
 
 def get_ys(params, ts, y0):
     return model.solve(params, ts, y0, model.kinetic_ode)
