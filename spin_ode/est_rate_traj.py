@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import jaxtyping
 import equinox as eqx
 import optax
+from optax import global_norm
 import tqdm
 import numpy as np
 
@@ -27,7 +28,11 @@ if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
         cfg["save_dir"] / "checkpoints", cfg["ckpt_interval"], cfg["ckpt_keep"]
     )
-    async_worker = mngr.get_async_worker(4)
+    async_worker = mngr.get_async_worker(6)
+    loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "loss.txt", async_worker)
+    grad_norm_logger = mngr.ScalarLogger(
+        cfg["save_dir"] / "grad_norm.txt", async_worker
+    )
 
 # Data =========================================================================
 
@@ -119,9 +124,10 @@ def opt_step(
     grads = jax.tree.map(
         lambda g, m: jnp.where(m, g, 0.0), grads, fix_params["opt_mask"]
     )
+    grad_norm = global_norm(eqx.filter(grads, eqx.is_inexact_array))
     updates, opt_state = optim.update(grads, opt_state, var_params, value=loss)
     new_var_params = eqx.apply_updates(var_params, updates)
-    return new_var_params, loss, opt_state
+    return new_var_params, loss, grad_norm, opt_state
 
 
 # Training =====================================================================
@@ -133,7 +139,7 @@ optimizer = optax.chain(
 opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
 length_strategy = [1.0]
-epochs_strategy = [cfg["epochs"]] 
+epochs_strategy = [cfg["epochs"]]
 
 if not cfg["train"]:
     epochs_strategy = []
@@ -143,19 +149,22 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
     bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
     for i in bar:
-        var_params, loss, opt_state = opt_step(
+        var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys[0]
         )
+        loss_val = float(jnp.squeeze(loss))
+        grad_norm_val = float(jnp.squeeze(grad_norm))
         combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
         k_diff = log_mse(combined_pred, combined_true, eps=1e-16)
         bar.set_postfix(
             {
-                "loss": f"{float(jnp.squeeze(loss)):.4e}",
+                "loss": f"{loss_val:.4e}",
+                "gnorm": f"{grad_norm_val:.4e}",
                 "k_diff": f"{float(jnp.squeeze(k_diff)):.4e}",
             }
         )
 
-        if cfg["save_dir"] and (i+1) % cfg["test_interval"] == 0:  # testing
+        if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
             traj_pred = model.solve(
                 {**jax.tree.map(jnp.exp, var_params), **fix_params},
                 ts,
@@ -167,19 +176,23 @@ for length, epochs in zip(length_strategy, epochs_strategy):
                 fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
                 fig.savefig(cfg["save_dir"] / "est_traj.pdf")
                 plot.plt.close(fig)
-            
+
             async_worker.submit(_plot_y)
             async_worker.submit(_plot_k, combined_pred)
+            loss_logger.flush()
+            grad_norm_logger.flush()
 
-        if cfg["save_dir"]:  # checkpoint
+        if cfg["save_dir"]:  # checkpoint + scalar logging
             state = {"var_params": var_params, "opt_state": opt_state}
             mngr.standard_save(ckpt_mngr, i, state, loss)
+            loss_logger.log(i, loss_val)
+            grad_norm_logger.log(i, grad_norm_val)
 
 
 if cfg["infer"]:
     assert cfg["save_dir"], "must provide save_dir to load checkpoint"
     restore_step = ckpt_mngr.best_step()
-    print(f"Inference using checkpoint {cfg["save_dir"]}/{restore_step}")
+    print(f"Inference using checkpoint {cfg['save_dir']}/{restore_step}")
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
     state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
 
@@ -189,11 +202,13 @@ if cfg["infer"]:
         cfg["save_dir"] / "est_k.npz",
         truth=combined_true,
         pred=combined_pred,
-        init=combined_init
+        init=combined_init,
     )
 
 if cfg["save_dir"]:
     print("Finalising")
+    loss_logger.close()
+    grad_norm_logger.close()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

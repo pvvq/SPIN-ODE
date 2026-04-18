@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import jaxtyping
 import equinox as eqx
 import optax
+from optax import global_norm
 import tqdm
 
 jax.config.update("jax_enable_x64", True)
@@ -32,7 +33,11 @@ if cfg["save_dir"]:
         cfg["ckpt_interval"],
         cfg["ckpt_keep"],
     )
-    async_worker = mngr.get_async_worker()
+    async_worker = mngr.get_async_worker(6)
+    loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "loss.txt", async_worker)
+    grad_norm_logger = mngr.ScalarLogger(
+        cfg["save_dir"] / "grad_norm.txt", async_worker
+    )
 
 # Data =========================================================================
 
@@ -95,9 +100,10 @@ def opt_step(
     ys,
 ):
     loss, grads = eqx.filter_value_and_grad(loss_fn)(var_params, fix_params, ts, ys)
+    grad_norm = global_norm(eqx.filter(grads, eqx.is_inexact_array))
     updates, opt_state = optim.update(grads, opt_state, var_params)
     new_var_params = eqx.apply_updates(var_params, updates)
-    return new_var_params, loss, opt_state
+    return new_var_params, loss, grad_norm, opt_state
 
 
 def _plot_ys(ys_pred, fname):
@@ -126,29 +132,36 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
     bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
     for i in bar:
-        var_params, loss, opt_state = opt_step(
+        var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
+        loss_val = float(jnp.squeeze(loss))
+        grad_norm_val = float(jnp.squeeze(grad_norm))
         bar.set_postfix(
             {
-                "loss": f"{float(jnp.squeeze(loss)):.4e}",
+                "loss": f"{loss_val:.4e}",
+                "gnorm": f"{grad_norm_val:.4e}",
             }
         )
 
-        if cfg["save_dir"]:  # checkpoint
+        if cfg["save_dir"]:  # checkpoint + scalar logging
             state, _ = eqx.partition(var_params["nn"], eqx.is_array_like)
             mngr.standard_save(ckpt_mngr, i, state, loss)
+            loss_logger.log(i, loss_val)
+            grad_norm_logger.log(i, grad_norm_val)
 
-        if cfg["save_dir"] and (i+1) % cfg["test_interval"] == 0:  # Testing
+        if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
             ys_pred = pred_ys({**var_params, **fix_params}, ts, ys[0])
             async_worker.submit(_plot_ys, ys_pred, f"traj_fit_{i}.pdf")
+            loss_logger.flush()
+            grad_norm_logger.flush()
 
 
 if cfg["infer"]:
     assert cfg["save_dir"], "must provide save_dir to load checkpoint"
     # load checkpoint
     restore_step = ckpt_mngr.best_step()
-    print(f"Inference using checkpoint {cfg["save_dir"]}/{restore_step}")
+    print(f"Inference using checkpoint {cfg['save_dir']}/{restore_step}")
     abstract_state, static = eqx.partition(var_params["nn"], eqx.is_array_like)
     restored_state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
     var_params["nn"] = eqx.combine(restored_state, static)
@@ -158,6 +171,8 @@ if cfg["infer"]:
 
 if cfg["save_dir"]:
     print("Finalising")
+    loss_logger.close()
+    grad_norm_logger.close()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

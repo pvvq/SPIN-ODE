@@ -1,4 +1,5 @@
 import sys
+import threading
 import yaml
 import argparse
 from pathlib import Path
@@ -93,7 +94,63 @@ def standard_restore(ckpt_mngr, step, abstract_state):
     # ckpt_mngr.all_steps(); ckpt_mngr.latest_step(); ckpt_mngr.best_step()
     return ckpt_mngr.restore(step, args=ocp.args.StandardRestore(abstract_state))
 
+
 def get_async_worker(max_workers=1):
     # async_worker.submit(Callable); async_worker.shutdown();
     async_worker = ThreadPoolExecutor(max_workers=max_workers)
     return async_worker
+
+
+class ScalarLogger:
+    """Buffered async scalar logger.
+
+    Appends ``step\\tvalue\\n`` lines to a file without blocking the main loop.
+    Call ``flush()`` periodically (e.g. at test steps) to drain the buffer.
+    Always call ``close()`` at the end to flush remaining entries.
+
+    Args:
+        filepath: path to the output text file (created / appended).
+        async_worker: a ``ThreadPoolExecutor`` used for the actual I/O.
+    """
+
+    def __init__(self, filepath, async_worker: ThreadPoolExecutor):
+        self.filepath = Path(filepath)
+        self.filepath.parent.mkdir(parents=True, exist_ok=True)
+        self._worker = async_worker
+        self._buf: list[str] = []
+        self._lock = threading.Lock()
+
+    def log(self, step: int, value: float) -> None:
+        with self._lock:
+            self._buf.append(f"{step}\t{value:.6e}\n")
+
+    def flush(self) -> None:
+        """Swap buffer and write asynchronously — does not block."""
+        with self._lock:
+            lines, self._buf = self._buf, []
+        self._worker.submit(self._write, lines)
+
+    def _write(self, lines: list[str]) -> None:
+        with open(self.filepath, "a") as f:
+            f.writelines(lines)
+            f.flush()
+
+    def close(self) -> None:
+        """Flush remaining buffer (still async; pair with async_worker.shutdown())."""
+        self.flush()
+
+
+def plot_scalar_log(filepath):
+    """Plot txt log with each line `step\tvalue`"""
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    filepath = Path(filepath)
+    data = np.loadtxt(filepath, delimiter="\t")
+    steps, values = data[:, 0], data[:, 1]
+
+    fig, ax = plt.subplots(layout="constrained")
+    ax.plot(steps, values)
+    ax.set_xlabel("step")
+    ax.set_ylabel(filepath.stem)
+    fig.savefig(filepath.parent / f"{filepath.stem}.pdf")
