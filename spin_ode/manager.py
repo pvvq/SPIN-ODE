@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 import orbax.checkpoint as ocp
 from orbax.checkpoint.checkpoint_managers import preservation_policy as prsv_plcy
 from orbax.checkpoint.checkpoint_managers import save_decision_policy as save_plcy
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def parse_cmd_args():
@@ -104,10 +106,6 @@ def get_async_worker(max_workers=1):
 class ScalarLogger:
     """Buffered async scalar logger.
 
-    Appends ``step\\tvalue\\n`` lines to a file without blocking the main loop.
-    Call ``flush()`` periodically (e.g. at test steps) to drain the buffer.
-    Always call ``close()`` at the end to flush remaining entries.
-
     Args:
         filepath: path to the output text file (created / appended).
         async_worker: a ``ThreadPoolExecutor`` used for the actual I/O.
@@ -118,40 +116,41 @@ class ScalarLogger:
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
         self._worker = async_worker
         self._buf: list[str] = []
-        self._lock = threading.Lock()
+        self._buf_lock = threading.Lock()
+        self._file_lock = threading.Lock()
 
-    def log(self, step: int, value: float) -> None:
-        with self._lock:
+    def log(self, step: int, value: float):
+        """Appends ``step\\tvalue\\n`` lines to a file"""
+        with self._buf_lock:
             self._buf.append(f"{step}\t{value:.6e}\n")
 
-    def flush(self) -> None:
-        """Swap buffer and write asynchronously — does not block."""
-        with self._lock:
+    def flush(self):
+        """Swap buffer and write asynchronously, always call in the end"""
+        with self._buf_lock:
             lines, self._buf = self._buf, []
         self._worker.submit(self._write, lines)
 
-    def _write(self, lines: list[str]) -> None:
-        with open(self.filepath, "a") as f:
-            f.writelines(lines)
-            f.flush()
+    def _write(self, lines: list[str]):
+        with self._file_lock:
+            with open(self.filepath, "a") as f:
+                f.writelines(lines)
+                f.flush()
 
-    def close(self) -> None:
-        """Flush remaining buffer (still async; pair with async_worker.shutdown())."""
-        self.flush()
+    def plot(self):
+        """Submit a plot of the log file to the async worker."""
+        self._worker.submit(self._plot)
 
+    def _plot(self):
+        with self._file_lock:
+            if not self.filepath.exists() or self.filepath.stat().st_size == 0:
+                return
+            data = np.loadtxt(self.filepath, delimiter="\t")
+        steps, values = data[:, 0], data[:, 1]
 
-def plot_scalar_log(filepath):
-    """Plot txt log with each line `step\tvalue`"""
-    import numpy as np
-    import matplotlib.pyplot as plt
-
-    filepath = Path(filepath)
-    data = np.loadtxt(filepath, delimiter="\t")
-    steps, values = data[:, 0], data[:, 1]
-
-    fig, ax = plt.subplots(layout="constrained")
-    ax.plot(steps, values)
-    ax.set_xlabel("step")
-    ax.set_ylabel(filepath.stem)
-    fig.savefig(filepath.parent / f"{filepath.stem}.pdf")
-    return fig
+        fig, ax = plt.subplots(layout="constrained")
+        ax.plot(steps, values)
+        ax.set_xlabel("step")
+        ax.set_ylabel(self.filepath.stem)
+        ax.set_yscale("log")
+        fig.savefig(self.filepath.parent / f"{self.filepath.stem}.pdf")
+        plt.close(fig)

@@ -171,8 +171,11 @@ for length, epochs in zip(length_strategy, epochs_strategy):
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
             ys_pred = pred_ys({**var_params, **fix_params}, ts, b_ys[0, 0])
             async_worker.submit(_plot_ys, ys_pred, f"logs/traj_fit_{i}.pdf")
+
             loss_logger.flush()
+            loss_logger.plot()
             grad_norm_logger.flush()
+            grad_norm_logger.plot()
 
 
 if cfg["infer"]:
@@ -189,8 +192,8 @@ if cfg["infer"]:
 
 if cfg["save_dir"]:
     print("Finalising")
-    loss_logger.close()
-    grad_norm_logger.close()
+    loss_logger.flush()
+    grad_norm_logger.flush()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

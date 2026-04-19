@@ -200,8 +200,11 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
             async_worker.submit(_plot_k, var_params, f"logs/est_k_{i}.pdf")
+
             loss_logger.flush()
+            loss_logger.plot()
             grad_norm_logger.flush()
+            grad_norm_logger.plot()
 
 
 if cfg["infer"]:
@@ -223,8 +226,8 @@ if cfg["infer"]:
 
 if cfg["save_dir"]:
     print("Finalising")
-    loss_logger.close()
-    grad_norm_logger.close()
+    loss_logger.flush()
+    grad_norm_logger.flush()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

@@ -191,8 +191,11 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
             async_worker.submit(_plot_y, traj_pred, f"logs/est_ys_{i}.pdf")
             async_worker.submit(_plot_k, combined_pred, f"logs/est_k_{i}.pdf")
+
             loss_logger.flush()
+            loss_logger.plot()
             grad_norm_logger.flush()
+            grad_norm_logger.plot()
 
         if cfg["save_dir"]:  # checkpoint + scalar logging
             state = {"var_params": var_params, "opt_state": opt_state}
@@ -227,8 +230,8 @@ if cfg["infer"]:
 
 if cfg["save_dir"]:
     print("Finalising")
-    loss_logger.close()
-    grad_norm_logger.close()
+    loss_logger.flush()
+    grad_norm_logger.flush()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()
