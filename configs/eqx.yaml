@@ -1,6 +1,10 @@
 default: &default
   seed: 42
 
+  obs_num: 1
+  obs_sample: 4
+  obs_noise: 0.0
+
   # model
   solver:
     rtol: 1.e-6
@@ -14,15 +18,15 @@ traj_fit:
   <<: *default
   epochs: 2000
   learning_rate: 1.e-2
-  test_interval: 100
-  ckpt_interval: 1000
+  test_interval: 50
+  ckpt_interval: 10
 
 est_rate_dydt: &est_rate_dydt
   <<: *default
   epochs: 5000
   learning_rate: 1.e-2
   test_interval: 100
-  ckpt_interval: 1000
+  ckpt_interval: 10
 
 est_rate_neural_ode:
   <<: *est_rate_dydt
@@ -35,7 +39,9 @@ est_rate_finite_diff:
 
 est_rate_traj:
   <<: *default
+  k_noise: 1.e-3
+
   epochs: 2000
   learning_rate: 1.e-3
   test_interval: 100
-  ckpt_interval: 1000
+  ckpt_interval: 10

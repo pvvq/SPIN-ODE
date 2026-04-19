@@ -14,6 +14,7 @@ import tqdm
 import numpy as np
 
 jax.config.update("jax_enable_x64", True)
+FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 
 import model
 import data
@@ -21,8 +22,8 @@ import manager as mngr
 from metrics import scale_mse, log_mse
 import plot
 
-FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 cfg = mngr.load_config()
+print(cfg)
 key = jax.random.PRNGKey(cfg["seed"])
 if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
@@ -48,13 +49,21 @@ params = {
 b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
 # re-compute trajectory to avoid numerical error between solvers
 b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-    params, ts, b_ys_csv[:,0,:], model.kinetic_ode
+    params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
 )
-ys = b_ys[0]
-b_ys = jnp.expand_dims(ys, 0)
 
-subkey, key = jax.random.split(key, 2)
-b_ys = data.add_normal_noise(b_ys, 7e-2, subkey)
+if cfg["obs_num"]:
+    b_ys = b_ys[0 : cfg["obs_num"], :, :]
+if cfg["obs_sample"]:
+    sample_idx = jnp.linspace(
+        0, ts.shape[0], num=cfg["obs_sample"], endpoint=False, dtype=int
+    )
+    ts = ts[sample_idx]
+    b_ys = b_ys[:, sample_idx, :]
+    print("Using sample index: ", sample_idx)
+if cfg["obs_noise"]:
+    subkey, key = jax.random.split(key, 2)
+    b_ys_noise = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
 
 
 scale = {
@@ -77,10 +86,11 @@ ground_truth = {k: v for k, v in params.items() if k in var_names}
 fix_params = {k: v for k, v in params.items() if k not in var_names}
 
 
-# add random noise
-var_params = jax.tree.map(
-    lambda leaf: data.add_normal_noise(leaf, factor=1e-1, key=key), ground_truth
-)
+if cfg["k_noise"]:
+    var_params = jax.tree.map(
+        lambda leaf: data.add_normal_noise(leaf, factor=float(cfg["k_noise"]), key=key),
+        ground_truth,
+    )
 
 var_params = jax.tree.map(jnp.log, var_params)  # NOTE: log scale
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
@@ -99,6 +109,12 @@ def _plot_k(combined_pred, fname):
         ],
         ["Estimated", "Initial", "Ground truth"],
     )
+    fig.savefig(cfg["save_dir"] / fname)
+    plot.plt.close(fig)
+
+
+def _plot_y(traj_pred, fname):
+    fig = plot.plot_series(y=traj_pred, t=ts, yy=b_ys[0], tt=ts)
     fig.savefig(cfg["save_dir"] / fname)
     plot.plt.close(fig)
 
@@ -169,16 +185,11 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             traj_pred = model.solve(
                 {**jax.tree.map(jnp.exp, var_params), **fix_params},
                 ts,
-                ys[0],
+                b_ys[0, 0, :],
                 model.kinetic_ode,
             )
 
-            def _plot_y():
-                fig = plot.plot_series(y=traj_pred, t=ts, yy=ys, tt=ts)
-                fig.savefig(cfg["save_dir"] / "est_traj.pdf")
-                plot.plt.close(fig)
-
-            async_worker.submit(_plot_y)
+            async_worker.submit(_plot_y, traj_pred, f"logs/est_ys_{i}.pdf")
             async_worker.submit(_plot_k, combined_pred, f"logs/est_k_{i}.pdf")
             loss_logger.flush()
             grad_norm_logger.flush()
@@ -205,6 +216,14 @@ if cfg["infer"]:
         pred=combined_pred,
         init=combined_init,
     )
+
+    traj_pred = model.solve(
+        {**jax.tree.map(jnp.exp, var_params), **fix_params},
+        ts,
+        b_ys[0, 0, :],
+        model.kinetic_ode,
+    )
+    _plot_y(traj_pred, "est_ys.pdf")
 
 if cfg["save_dir"]:
     print("Finalising")

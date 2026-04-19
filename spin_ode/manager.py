@@ -154,3 +154,4 @@ def plot_scalar_log(filepath):
     ax.set_xlabel("step")
     ax.set_ylabel(filepath.stem)
     fig.savefig(filepath.parent / f"{filepath.stem}.pdf")
+    return fig

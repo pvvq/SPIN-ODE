@@ -53,10 +53,22 @@ params = {
 b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
 # re-compute trajectory to avoid numerical error between solvers
 b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-    params, ts, b_ys_csv[:,0,:], model.kinetic_ode
+    params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
 )
-ys = b_ys[0]
-b_ys = jnp.expand_dims(ys, 0)
+
+if cfg["obs_num"]:
+    b_ys = b_ys[0 : cfg["obs_num"], :, :]
+if cfg["obs_sample"]:
+    sample_idx = jnp.linspace(
+        0, ts.shape[0], num=cfg["obs_sample"], endpoint=False, dtype=int
+    )
+    ts = ts[sample_idx]
+    b_ys = b_ys[:, sample_idx, :]
+    print("Using sample index: ", sample_idx)
+if cfg["obs_noise"]:
+    subkey, key = jax.random.split(key, 2)
+    b_ys = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
+
 
 
 scale = {
@@ -113,7 +125,7 @@ def opt_step(
 
 
 def _plot_ys(ys_pred, fname):
-    fig = plot.plot_series(y=ys_pred, t=ts, yy=ys, tt=ts)
+    fig = plot.plot_series(y=ys_pred, t=ts, yy=b_ys[0], tt=ts)
     fig.savefig(cfg["save_dir"] / fname)
     plot.plt.close(fig)
 
@@ -157,7 +169,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             grad_norm_logger.log(i, grad_norm_val)
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
-            ys_pred = pred_ys({**var_params, **fix_params}, ts, ys[0])
+            ys_pred = pred_ys({**var_params, **fix_params}, ts, b_ys[0, 0])
             async_worker.submit(_plot_ys, ys_pred, f"logs/traj_fit_{i}.pdf")
             loss_logger.flush()
             grad_norm_logger.flush()
@@ -172,7 +184,7 @@ if cfg["infer"]:
     restored_state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
     var_params["nn"] = eqx.combine(restored_state, static)
 
-    ys_pred = pred_ys({**var_params, **fix_params}, ts, ys[0])
+    ys_pred = pred_ys({**var_params, **fix_params}, ts, b_ys[0, 0])
     _plot_ys(ys_pred, "traj_fit.pdf")
 
 if cfg["save_dir"]:

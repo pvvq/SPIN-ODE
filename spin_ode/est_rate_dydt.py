@@ -52,10 +52,22 @@ params = {
 b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
 # re-compute trajectory to avoid numerical error between solvers
 b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-    params, ts, b_ys_csv[:,0,:], model.kinetic_ode
+    params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
 )
-ys = b_ys[0]
-b_ys = jnp.expand_dims(ys, 0)
+
+if cfg["obs_num"]:
+    b_ys = b_ys[0 : cfg["obs_num"], :, :]
+if cfg["obs_sample"]:
+    sample_idx = jnp.linspace(
+        0, ts.shape[0], num=cfg["obs_sample"], endpoint=False, dtype=int
+    )
+    ts = ts[sample_idx]
+    b_ys = b_ys[:, sample_idx, :]
+    print("Using sample index: ", sample_idx)
+if cfg["obs_noise"]:
+    subkey, key = jax.random.split(key, 2)
+    b_ys = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
+
 
 
 scale = {
