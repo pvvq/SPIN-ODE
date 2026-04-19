@@ -45,8 +45,16 @@ if cfg["save_dir"]:
 sch, kinetics, ts, y0 = data.get_scheme("toy")
 nspec = len(sch["SPC_NAMES"])
 
-b_ys = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
-# print(b_ys.shape)
+params = {
+    **kinetics,
+    "solver": cfg["solver"],
+}
+
+b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
+# re-compute trajectory to avoid numerical error between solvers
+b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+    params, ts, b_ys_csv[:,0,:], model.kinetic_ode
+)
 ys = b_ys[0]
 b_ys = jnp.expand_dims(ys, 0)
 
