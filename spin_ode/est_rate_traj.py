@@ -90,6 +90,9 @@ if cfg["obs_sample"]:
     ys0 = ys0[sample_idx, :]
     print("Using sample index: ", sample_idx)
 
+if cfg["mass-only"]:
+    uniq_mass, P_spc_mass = data.get_mass_projection(target_spc_names=sch["SPC_NAMES"])
+
 arrs_loader = arrays_loader((obs_ys,), batch_size=cfg["batch_size"], key=key)
 
 # Model ========================================================================
@@ -122,7 +125,7 @@ def _plot_k(k_a_pred, fname):
 
 
 def _plot_y(traj_pred, fname):
-    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys0, tt=ts)
+    fig = plot.plot_series(y=traj_pred @ P_spc_mass.T, t=ts, yy=ys0 @ P_spc_mass.T, tt=ts)
     fig.savefig(cfg["save_dir"] / fname)
     plot.plt.close(fig)
 
@@ -132,7 +135,7 @@ def loss_fn(var_params, fix_params, ts, b_ys):
     b_ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
         params, ts, b_ys[:, 0], model.kinetic_correction_ode
     )
-    loss = metrics.log_mse(b_ys_pred, b_ys)
+    loss = metrics.log_mse(b_ys_pred @ P_spc_mass.T, b_ys @ P_spc_mass.T)
     return loss
 
 
