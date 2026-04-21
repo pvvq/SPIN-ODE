@@ -3,7 +3,6 @@ import threading
 import yaml
 import argparse
 from pathlib import Path
-from shutil import copyfile
 from concurrent.futures import ThreadPoolExecutor
 
 import orbax.checkpoint as ocp
@@ -60,7 +59,8 @@ def load_config():
     if args.save_dir:
         save_dir = Path(args.save_dir).absolute()
         save_dir.mkdir(parents=True, exist_ok=True)
-        copyfile(args.config, save_dir / Path(args.config).name)
+        with open(save_dir / "config.yaml", "w") as f:
+            yaml.dump(config_dict, f, default_flow_style=False)
         config_dict["save_dir"] = save_dir
     else:
         config_dict["save_dir"] = None
