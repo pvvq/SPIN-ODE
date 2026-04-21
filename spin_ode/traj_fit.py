@@ -4,8 +4,8 @@ Neural ODE fit trajectory
 Usage: python traj_fit.py -h
 """
 
-import sys
 from pathlib import Path
+from pprint import pprint
 
 import jax
 import jax.numpy as jnp
@@ -16,17 +16,19 @@ from optax import global_norm
 import tqdm
 
 jax.config.update("jax_enable_x64", True)
+FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 
 import model
 import data
 import manager as mngr
 from metrics import scale_mse
-
-sys.path.append(str(Path.cwd()))
 import plot
 
-FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 cfg = mngr.load_config()
+pprint(cfg)
+
+key = jax.random.PRNGKey(cfg["seed"])
+
 if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
         cfg["save_dir"] / "checkpoints",
@@ -68,7 +70,6 @@ if cfg["obs_sample"]:
 if cfg["obs_noise"]:
     subkey, key = jax.random.split(key, 2)
     b_ys = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
-
 
 
 scale = {
@@ -144,11 +145,29 @@ epochs_strategy = [cfg["epochs"]]
 if not cfg["train"]:
     epochs_strategy = []
 
+if cfg["resume"]:
+    if cfg["resume_ckpt"]:
+        restore_path = Path(cfg["resume_ckpt"]).absolute()
+    else:
+        assert cfg["save_dir"], "must provide save_dir or resume_ckpt to resume"
+        restore_path = cfg["save_dir"] / "checkpoints"
+    restore_mngr = mngr.get_checkpoint_manager(restore_path)
+    start_epoch = restore_mngr.latest_step()
+    print(f"Resume from checkpoint {restore_path}/{start_epoch}")
+
+    arr_params, static_params = eqx.partition(var_params, eqx.is_array_like)
+    abstract_state = {"var_params": arr_params, "opt_state": opt_state}
+    restored = mngr.standard_restore(restore_mngr, start_epoch, abstract_state)
+    var_params = eqx.combine(restored["var_params"], static_params)
+    opt_state = restored["opt_state"]
+else:
+    start_epoch = 0
+
 
 for length, epochs in zip(length_strategy, epochs_strategy):
     print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-    bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
+    bar = tqdm.tqdm(range(start_epoch + 1, epochs + 1), desc="Epochs", ncols=120)
     for i in bar:
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
@@ -164,7 +183,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
 
         if cfg["save_dir"]:  # checkpoint + scalar logging
             arr_params, _ = eqx.partition(var_params, eqx.is_array_like)
-            state = {"arr_params": arr_params, "opt_state": opt_state}
+            state = {"var_params": arr_params, "opt_state": opt_state}
             mngr.standard_save(ckpt_mngr, i, state, loss)
             loss_logger.log(i, loss_val)
             grad_norm_logger.log(i, grad_norm_val)
@@ -183,10 +202,14 @@ if cfg["infer"]:
     assert cfg["save_dir"], "must provide save_dir to load checkpoint"
     # load checkpoint
     restore_step = ckpt_mngr.best_step()
-    print(f"Inference using checkpoint {cfg['save_dir']}/checkpoints/{restore_step}")
-    abstract_state, static = eqx.partition(var_params["nn"], eqx.is_array_like)
-    restored_state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
-    var_params["nn"] = eqx.combine(restored_state, static)
+    print(
+        f"Inference using best checkpoint {cfg['save_dir']}/checkpoints/{restore_step}"
+    )
+    arr_params, static_params = eqx.partition(var_params, eqx.is_array_like)
+    restored = mngr.standard_restore(
+        ckpt_mngr, restore_step, {"var_params": arr_params}
+    )
+    var_params = eqx.combine(restored["var_params"], static_params)
 
     ys_pred = pred_ys({**var_params, **fix_params}, ts, b_ys[0, 0])
     _plot_ys(ys_pred, "traj_fit.pdf")

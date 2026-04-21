@@ -5,6 +5,7 @@ Usage: python est_rate_dydt.py -h
 """
 
 from pathlib import Path
+import pprint
 
 import jax
 import jax.numpy as jnp
@@ -16,6 +17,7 @@ import tqdm
 import numpy as np
 
 jax.config.update("jax_enable_x64", True)
+FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 
 import model
 import data
@@ -23,9 +25,11 @@ import manager as mngr
 from metrics import scale_mse
 import plot
 
-FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
-
 cfg = mngr.load_config()
+pprint.pp(cfg)
+
+key = jax.random.PRNGKey(cfg["seed"])
+
 if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
         cfg["save_dir"] / "checkpoints",
@@ -37,6 +41,9 @@ if cfg["save_dir"]:
     loss_logger = mngr.ScalarLogger(cfg["save_dir"] / "logs" / "loss.txt", async_worker)
     grad_norm_logger = mngr.ScalarLogger(
         cfg["save_dir"] / "logs" / "grad_norm.txt", async_worker
+    )
+    k_err_logger = mngr.ScalarLogger(
+        cfg["save_dir"] / "logs" / "k_err.txt", async_worker
     )
 
 # Data =========================================================================
@@ -69,7 +76,6 @@ if cfg["obs_noise"]:
     b_ys = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
 
 
-
 scale = {
     "yMax": jnp.max(b_ys, axis=(0, 1)),
     "yMin": jnp.min(b_ys, axis=(0, 1)),
@@ -92,17 +98,15 @@ if cfg["dydt"] == "neural_ode":
     )
 
     # load checkpoint
-    # TODO: now retore old state, which is nn only, retrain and store use nn+opt_step
     restore_path = Path(cfg["neural_ode_ckpt"]).absolute()
     restore_mngr = mngr.get_checkpoint_manager(restore_path)
     restore_step = restore_mngr.best_step()
-    print(f"Loading checkpoint {restore_path}/{restore_step}")
-    abstract_state = {"arr_params": {"nn": neural_network}}
-    arr_state, static_state = eqx.partition(abstract_state, eqx.is_array_like)
-    restored_arr = mngr.standard_restore(restore_mngr, restore_step, arr_state)
-    restored_state = eqx.combine(restored_arr, static_state)
-
-    params["nn"] = restored_state["arr_params"]["nn"]
+    print(f"Loading Neural ODE from {restore_path}/{restore_step}")
+    arr_nn, static_nn = eqx.partition(neural_network, eqx.is_array_like)
+    restored = mngr.standard_restore(
+        restore_mngr, restore_step, {"var_params": {"nn": arr_nn}}
+    )
+    params["nn"] = eqx.combine(restored["var_params"]["nn"], static_nn)
     b_dydt = eqx.filter_vmap(
         eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
         in_axes=(None, 0, None),
@@ -124,8 +128,7 @@ combined_true = data.combine_static_ro2(ground_truth)
 combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
 
-def _plot_k(var_params, fname):
-    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+def _plot_k(combined_pred, fname):
     fig = plot.plot_k(
         [combined_pred, combined_init, combined_true],
         ["Estimated", "Initial", "Ground truth"],
@@ -174,6 +177,20 @@ optimizer = optax.chain(
 )
 opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
+start_epoch = 0
+if cfg["resume"]:
+    if cfg["resume_ckpt"]:
+        restore_path = Path(cfg["resume_ckpt"]).absolute()
+    else:
+        assert cfg["save_dir"], "must provide save_dir or resume_ckpt to resume"
+        restore_path = cfg["save_dir"] / "checkpoints"
+    restore_mngr = mngr.get_checkpoint_manager(restore_path)
+    start_epoch = restore_mngr.latest_step()
+    print(f"Resume from checkpoint {restore_path}/{start_epoch}")
+    abstract_state = {"var_params": var_params, "opt_state": opt_state}
+    restored = mngr.standard_restore(restore_mngr, start_epoch, abstract_state)
+    var_params = restored["var_params"]
+    opt_state = restored["opt_state"]
 
 length_strategy = [1.0]
 epochs_strategy = [cfg["epochs"]]
@@ -184,28 +201,37 @@ if not cfg["train"]:
 for length, epochs in zip(length_strategy, epochs_strategy):
     print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-    bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
+    bar = tqdm.tqdm(range(start_epoch + 1, epochs + 1), desc="Epochs", ncols=120)
     for i in bar:
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
         )
-        loss_val = float(jnp.squeeze(loss))
-        grad_norm_val = float(jnp.squeeze(grad_norm))
-        bar.set_postfix({"loss": f"{loss_val:.4e}", "gnorm": f"{grad_norm_val:.4e}"})
+        combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+        k_err = scale_mse(combined_pred, combined_true, combined_true)
+        bar.set_postfix(
+            {
+                "loss": f"{float(loss):.4e}",
+                "gnorm": f"{float(grad_norm):.4e}",
+                "k_err": f"{float(k_err):.4e}",
+            }
+        )
 
         if cfg["save_dir"]:  # checkpoint + scalar logging
             state = {"var_params": var_params, "opt_state": opt_state}
             mngr.standard_save(ckpt_mngr, i, state, loss)
-            loss_logger.log(i, loss_val)
-            grad_norm_logger.log(i, grad_norm_val)
+            loss_logger.log(i, loss)
+            grad_norm_logger.log(i, grad_norm)
+            k_err_logger.log(i, k_err)
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
-            async_worker.submit(_plot_k, var_params, f"logs/est_k_{i}.pdf")
+            async_worker.submit(_plot_k, combined_pred, f"logs/est_k_{i}.pdf")
 
             loss_logger.flush()
             loss_logger.plot()
             grad_norm_logger.flush()
             grad_norm_logger.plot()
+            k_err_logger.flush()
+            k_err_logger.plot()
 
 
 if cfg["infer"]:
@@ -215,9 +241,8 @@ if cfg["infer"]:
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
     state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
 
-    _plot_k(state["var_params"], "est_k.pdf")
-
     combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, state["var_params"]))
+    _plot_k(combined_pred, "est_k.pdf")
     np.savez(
         cfg["save_dir"] / "est_k.npz",
         truth=combined_true,
@@ -225,10 +250,17 @@ if cfg["infer"]:
         init=combined_init,
     )
 
+    params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
+    traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_ode)
+    fig = plot.plot_series(y=traj_pred, t=ts, yy=b_ys[0], tt=ts)
+    fig.savefig(cfg["save_dir"] / "est_ys.pdf")
+    plot.plt.close(fig)
+
 if cfg["save_dir"]:
     print("Finalising")
     loss_logger.flush()
     grad_norm_logger.flush()
+    k_err_logger.flush()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

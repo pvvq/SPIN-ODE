@@ -4,6 +4,9 @@ Estimate rate coefficient by gradient descent of trajectory loss
 Usage: python est_rate_traj.py -h
 """
 
+from pathlib import Path
+from pprint import pprint
+
 import jax
 import jax.numpy as jnp
 import jaxtyping
@@ -23,8 +26,10 @@ from metrics import scale_mse, log_mse
 import plot
 
 cfg = mngr.load_config()
-print(cfg)
+pprint(cfg)
+
 key = jax.random.PRNGKey(cfg["seed"])
+
 if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
         cfg["save_dir"] / "checkpoints", cfg["ckpt_interval"], cfg["ckpt_keep"]
@@ -159,6 +164,21 @@ optimizer = optax.chain(
 )
 opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
+start_epoch = 0
+if cfg["resume"]:
+    if cfg["resume_ckpt"]:
+        restore_path = Path(cfg["resume_ckpt"]).absolute()
+    else:
+        assert cfg["save_dir"], "must provide save_dir or resume_ckpt to resume"
+        restore_path = cfg["save_dir"] / "checkpoints"
+    restore_mngr = mngr.get_checkpoint_manager(restore_path)
+    start_epoch = restore_mngr.latest_step()
+    print(f"Resume from checkpoint {restore_path}/{start_epoch}")
+    abstract_state = {"var_params": var_params, "opt_state": opt_state}
+    restored = mngr.standard_restore(restore_mngr, start_epoch, abstract_state)
+    var_params = restored["var_params"]
+    opt_state = restored["opt_state"]
+
 length_strategy = [1.0]
 epochs_strategy = [cfg["epochs"]]
 
@@ -168,22 +188,27 @@ if not cfg["train"]:
 for length, epochs in zip(length_strategy, epochs_strategy):
     print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
-    bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
+    bar = tqdm.tqdm(range(start_epoch + 1, epochs + 1), desc="Epochs", ncols=120)
     for i in bar:
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
-        loss_val = float(jnp.squeeze(loss))
-        grad_norm_val = float(jnp.squeeze(grad_norm))
         combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-        k_err = log_mse(combined_pred, combined_true, eps=1e-16)
+        k_err = scale_mse(combined_pred, combined_true, combined_true)
         bar.set_postfix(
             {
-                "loss": f"{loss_val:.4e}",
-                "gnorm": f"{grad_norm_val:.4e}",
-                "k_err": f"{float(jnp.squeeze(k_err)):.4e}",
+                "loss": f"{float(loss):.4e}",
+                "gnorm": f"{float(grad_norm):.4e}",
+                "k_err": f"{float(k_err):.4e}",
             }
         )
+
+        if cfg["save_dir"]:  # checkpoint + scalar logging
+            state = {"var_params": var_params, "opt_state": opt_state}
+            mngr.standard_save(ckpt_mngr, i, state, loss)
+            loss_logger.log(i, loss)
+            grad_norm_logger.log(i, grad_norm)
+            k_err_logger.log(i, k_err)
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
             params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
@@ -198,13 +223,6 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             grad_norm_logger.plot()
             k_err_logger.flush()
             k_err_logger.plot()
-
-        if cfg["save_dir"]:  # checkpoint + scalar logging
-            state = {"var_params": var_params, "opt_state": opt_state}
-            mngr.standard_save(ckpt_mngr, i, state, loss)
-            loss_logger.log(i, loss_val)
-            grad_norm_logger.log(i, grad_norm_val)
-            k_err_logger.log(i, k_err)
 
 
 if cfg["infer"]:
@@ -231,6 +249,7 @@ if cfg["save_dir"]:
     print("Finalising")
     loss_logger.flush()
     grad_norm_logger.flush()
+    k_err_logger.flush()
     ckpt_mngr.wait_until_finished()
     ckpt_mngr.close()
     async_worker.shutdown()

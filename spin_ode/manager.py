@@ -33,6 +33,12 @@ def parse_cmd_args():
         help="enable inference",
     )
     parser.add_argument(
+        "--resume",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="resume from `resume_ckpt` or else `save_dir`",
+    )
+    parser.add_argument(
         "--save_dir",
         "-s",
         type=str,
@@ -55,6 +61,7 @@ def load_config():
 
     config_dict["train"] = args.train
     config_dict["infer"] = args.infer
+    config_dict["resume"] = args.resume
 
     if args.save_dir:
         save_dir = Path(args.save_dir).absolute()
