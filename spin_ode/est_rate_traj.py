@@ -35,6 +35,9 @@ if cfg["save_dir"]:
     grad_norm_logger = mngr.ScalarLogger(
         cfg["save_dir"] / "logs" / "grad_norm.txt", async_worker
     )
+    k_err_logger = mngr.ScalarLogger(
+        cfg["save_dir"] / "logs" / "k_err.txt", async_worker
+    )
 
 # Data =========================================================================
 
@@ -119,12 +122,13 @@ def _plot_y(traj_pred, fname):
     plot.plt.close(fig)
 
 
-def loss_fn(var_params, fix_params, ts, ys):
+def loss_fn(var_params, fix_params, ts, b_ys):
     var_params = jax.tree.map(jnp.exp, var_params)
     params = {**var_params, **fix_params}
-    ys_pred = model.solve(params, ts, ys[0], model.kinetic_ode)
-    loss = log_mse(ys_pred, ys)
-    loss = scale_mse(ys_pred, ys, params["scale"]["yScale"])
+    b_ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+        params, ts, b_ys[:, 0], model.kinetic_ode
+    )
+    loss = log_mse(b_ys_pred, b_ys)
     return loss
 
 
@@ -167,27 +171,23 @@ for length, epochs in zip(length_strategy, epochs_strategy):
     bar = tqdm.tqdm(range(0, epochs), desc="Epochs", initial=0)
     for i in bar:
         var_params, loss, grad_norm, opt_state = opt_step(
-            optimizer, opt_state, var_params, fix_params, ts, b_ys[0]
+            optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
         loss_val = float(jnp.squeeze(loss))
         grad_norm_val = float(jnp.squeeze(grad_norm))
         combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-        k_diff = log_mse(combined_pred, combined_true, eps=1e-16)
+        k_err = log_mse(combined_pred, combined_true, eps=1e-16)
         bar.set_postfix(
             {
                 "loss": f"{loss_val:.4e}",
                 "gnorm": f"{grad_norm_val:.4e}",
-                "k_diff": f"{float(jnp.squeeze(k_diff)):.4e}",
+                "k_err": f"{float(jnp.squeeze(k_err)):.4e}",
             }
         )
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
-            traj_pred = model.solve(
-                {**jax.tree.map(jnp.exp, var_params), **fix_params},
-                ts,
-                b_ys[0, 0, :],
-                model.kinetic_ode,
-            )
+            params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
+            traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_ode)
 
             async_worker.submit(_plot_y, traj_pred, f"logs/est_ys_{i}.pdf")
             async_worker.submit(_plot_k, combined_pred, f"logs/est_k_{i}.pdf")
@@ -196,12 +196,15 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             loss_logger.plot()
             grad_norm_logger.flush()
             grad_norm_logger.plot()
+            k_err_logger.flush()
+            k_err_logger.plot()
 
         if cfg["save_dir"]:  # checkpoint + scalar logging
             state = {"var_params": var_params, "opt_state": opt_state}
             mngr.standard_save(ckpt_mngr, i, state, loss)
             loss_logger.log(i, loss_val)
             grad_norm_logger.log(i, grad_norm_val)
+            k_err_logger.log(i, k_err)
 
 
 if cfg["infer"]:
@@ -220,12 +223,8 @@ if cfg["infer"]:
         init=combined_init,
     )
 
-    traj_pred = model.solve(
-        {**jax.tree.map(jnp.exp, var_params), **fix_params},
-        ts,
-        b_ys[0, 0, :],
-        model.kinetic_ode,
-    )
+    params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
+    traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_ode)
     _plot_y(traj_pred, "est_ys.pdf")
 
 if cfg["save_dir"]:
