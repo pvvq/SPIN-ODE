@@ -97,11 +97,12 @@ if cfg["dydt"] == "neural_ode":
     restore_mngr = mngr.get_checkpoint_manager(restore_path)
     restore_step = restore_mngr.best_step()
     print(f"Loading checkpoint {restore_path}/{restore_step}")
-    abstract_state, static = eqx.partition(neural_network, eqx.is_array_like)
-    restored_state = mngr.standard_restore(restore_mngr, restore_step, abstract_state)
-    neural_network = eqx.combine(restored_state, static)
+    abstract_state = {"arr_params": {"nn": neural_network}}
+    arr_state, static_state = eqx.partition(abstract_state, eqx.is_array_like)
+    restored_arr = mngr.standard_restore(restore_mngr, restore_step, arr_state)
+    restored_state = eqx.combine(restored_arr, static_state)
 
-    params["nn"] = neural_network
+    params["nn"] = restored_state["arr_params"]["nn"]
     b_dydt = eqx.filter_vmap(
         eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
         in_axes=(None, 0, None),

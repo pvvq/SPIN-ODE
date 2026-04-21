@@ -163,7 +163,8 @@ for length, epochs in zip(length_strategy, epochs_strategy):
         )
 
         if cfg["save_dir"]:  # checkpoint + scalar logging
-            state, _ = eqx.partition(var_params["nn"], eqx.is_array_like)
+            arr_params, _ = eqx.partition(var_params, eqx.is_array_like)
+            state = {"arr_params": arr_params, "opt_state": opt_state}
             mngr.standard_save(ckpt_mngr, i, state, loss)
             loss_logger.log(i, loss_val)
             grad_norm_logger.log(i, grad_norm_val)

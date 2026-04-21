@@ -88,13 +88,26 @@ def get_checkpoint_manager(ckpt_dir, interval=1, keep=1, get_metric_fn=lambda m:
 
 
 # use new args API
-def standard_save(ckpt_mngr, step, state, metrics):
-    ckpt_mngr.save(step, args=ocp.args.StandardSave(state), metrics=metrics)
+def standard_save(ckpt_mngr, step, state: dict, metrics=None):
+    # composite save first level `state`
+    ckpt_mngr.save(
+        step,
+        args=ocp.args.Composite(
+            **{k: ocp.args.StandardSave(v) for k, v in state.items()}
+        ),
+        metrics=metrics,
+    )
 
 
-def standard_restore(ckpt_mngr, step, abstract_state):
+def standard_restore(ckpt_mngr, step, abstract_state: dict):
     # ckpt_mngr.all_steps(); ckpt_mngr.latest_step(); ckpt_mngr.best_step()
-    return ckpt_mngr.restore(step, args=ocp.args.StandardRestore(abstract_state))
+    composite = ckpt_mngr.restore(
+        step,
+        args=ocp.args.Composite(
+            **{k: ocp.args.StandardRestore(v) for k, v in abstract_state.items()}
+        ),
+    )
+    return dict(composite)
 
 
 def get_async_worker(max_workers=1):
