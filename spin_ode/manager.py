@@ -18,7 +18,7 @@ def parse_cmd_args():
         "--config", "-c", type=str, required=True, help="path to YAML config"
     )
     parser.add_argument(
-        "--target", "-t", type=str, default="default", help="target in YAML config"
+        "--target", "-t", type=str, help="target in YAML config"
     )
     parser.add_argument(
         "--train",
@@ -54,10 +54,12 @@ def load_config():
 
     # Load YAML
     with open(args.config, "r") as f:
-        config_dict = yaml.safe_load(f).get(args.target)
+        config_dict = yaml.safe_load(f)
 
-    if config_dict is None:
-        raise ValueError(f"Target '{args.target}' not found in config.")
+    if args.target is not None:
+        config_dict = config_dict.get(args.target)
+        if config_dict is None:
+            raise ValueError(f"Target '{args.target}' not found in config.")
 
     config_dict["train"] = args.train
     config_dict["infer"] = args.infer
