@@ -71,7 +71,9 @@ if cfg["obs_sample"]:
     print("Using sample index: ", sample_idx)
 if cfg["obs_noise"]:
     subkey, key = jax.random.split(key, 2)
-    b_ys_noise = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
+    b_ys = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
+if cfg["obs_scale"]:
+    b_ys = b_ys * (1.0 + cfg["obs_scale"])
 
 
 scale = {

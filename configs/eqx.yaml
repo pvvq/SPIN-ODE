@@ -3,7 +3,8 @@ default: &default
 
   obs_num: 1
   obs_sample: 4
-  obs_noise: 0.0
+  obs_noise: null
+  obs_scale: null
 
   # model
   solver:
