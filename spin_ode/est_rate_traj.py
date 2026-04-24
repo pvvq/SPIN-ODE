@@ -63,9 +63,7 @@ b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
 if cfg["obs_num"]:
     b_ys = b_ys[0 : cfg["obs_num"], :, :]
 if cfg["obs_sample"]:
-    sample_idx = jnp.linspace(
-        0, ts.shape[0], num=cfg["obs_sample"], endpoint=False, dtype=int
-    )
+    sample_idx = jnp.linspace(0, ts.shape[0] - 1, num=cfg["obs_sample"], dtype=int)
     ts = ts[sample_idx]
     b_ys = b_ys[:, sample_idx, :]
     print("Using sample index: ", sample_idx)
@@ -74,7 +72,6 @@ if cfg["obs_noise"]:
     b_ys = data.add_normal_noise(b_ys, float(cfg["obs_noise"]), subkey)
 if cfg["obs_scale"]:
     b_ys = b_ys * (1.0 + cfg["obs_scale"])
-
 
 scale = {
     "yMax": jnp.max(b_ys, axis=(0, 1)),
