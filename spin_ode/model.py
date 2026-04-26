@@ -45,9 +45,18 @@ def neural_ode(t, y, args):
 
 
 def kinetic_ode(t, y, args):
-    """time derivative of model state"""
+    """kinetic rate law ODE"""
     ro2_sum = args["update_RO2_fn"](y)
     k = args["update_rconst_RO2_fn"](args["k_static"], args["ro2_coef"], ro2_sum)
+    dy_dt = args["rate_law_fn"](y, k, args["stoicm"])
+    return dy_dt
+
+
+def kinetic_correction_ode(t, y, args):
+    """kinetic rate law ODE, with rate coefficient correction"""
+    ro2_sum = args["update_RO2_fn"](y)
+    k = args["update_rconst_RO2_fn"](args["k_static"], args["ro2_coef"], ro2_sum)
+    k = k * jnp.exp(args["k_a_log"])  # rate coefficient correction
     dy_dt = args["rate_law_fn"](y, k, args["stoicm"])
     return dy_dt
 

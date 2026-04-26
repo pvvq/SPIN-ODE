@@ -22,7 +22,7 @@ FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 import model
 import data
 import manager as mngr
-from metrics import scale_mse, log_mse
+from metrics import mse, log_mse
 import plot
 
 cfg = mngr.load_config()
@@ -46,19 +46,28 @@ if cfg["save_dir"]:
 
 # Data =========================================================================
 
-sch, kinetics, ts, y0 = data.get_scheme("toy")
+sch, kinetics, ts, y0 = data.get_scheme(cfg["scheme"])
 nspec = len(sch["SPC_NAMES"])
+nrect = len(sch["EQN_NAMES"])
 
 params = {
     **kinetics,
     "solver": cfg["solver"],
 }
 
-b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
-# re-compute trajectory to avoid numerical error between solvers
-b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-    params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
-)
+if cfg["scheme"] == "toy":
+    b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
+    # re-compute trajectory to avoid numerical error between solvers
+    b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+        params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
+    )
+elif cfg["scheme"] == "pollu":
+    b_y0 = jnp.expand_dims(y0, 0)
+    b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+        params, ts, b_y0, model.kinetic_ode
+    )
+else:
+    assert False, "Unknown scheme"
 
 if cfg["obs_num"]:
     b_ys = b_ys[0 : cfg["obs_num"], :, :]
@@ -88,32 +97,29 @@ params["scale"] = scale
 
 # Model ========================================================================
 
-var_names = ["k_static", "ro2_coef"]
-ground_truth = {k: v for k, v in params.items() if k in var_names}
-fix_params = {k: v for k, v in params.items() if k not in var_names}
+ground_truth = {
+    "k_a_log": jnp.zeros(nrect, dtype=FTYPE),  # NOTE: log scale correction coefficients
+}
+var_params = ground_truth.copy()
+fix_params = params
 
 
 if cfg["k_noise"]:
-    var_params = jax.tree.map(
-        lambda leaf: data.add_normal_noise(leaf, factor=float(cfg["k_noise"]), key=key),
-        ground_truth,
+    var_params["k_a_log"] = (
+        var_params["k_a_log"]
+        + jax.random.normal(key, var_params["k_a_log"].shape)
+        * float(cfg["k_noise"])
     )
 
-var_params = jax.tree.map(jnp.log, var_params)  # NOTE: log scale
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
 
+k_a_init = jnp.exp(var_params["k_a_log"])
+k_a_true = jnp.exp(ground_truth["k_a_log"])
 
-combined_true = data.combine_static_ro2(ground_truth)
-combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
 
-
-def _plot_k(combined_pred, fname):
+def _plot_k(k_a_pred, fname):
     fig = plot.plot_k(
-        [
-            combined_pred / combined_true,
-            combined_init / combined_true,
-            combined_true / combined_true,
-        ],
+        [k_a_pred, k_a_init, k_a_true],
         ["Estimated", "Initial", "Ground truth"],
     )
     fig.savefig(cfg["save_dir"] / fname)
@@ -127,10 +133,9 @@ def _plot_y(traj_pred, fname):
 
 
 def loss_fn(var_params, fix_params, ts, b_ys):
-    var_params = jax.tree.map(jnp.exp, var_params)
     params = {**var_params, **fix_params}
     b_ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-        params, ts, b_ys[:, 0], model.kinetic_ode
+        params, ts, b_ys[:, 0], model.kinetic_correction_ode
     )
     loss = log_mse(b_ys_pred, b_ys)
     return loss
@@ -192,8 +197,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
-        combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-        k_err = scale_mse(combined_pred, combined_true, combined_true)
+        k_err = mse(var_params["k_a_log"], ground_truth["k_a_log"])
         bar.set_postfix(
             {
                 "loss": f"{float(loss):.4e}",
@@ -210,11 +214,15 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             k_err_logger.log(i, k_err)
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
-            params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
-            traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_ode)
+            params = {**var_params, **fix_params}
+            traj_pred = model.solve(
+                params, ts, b_ys[0, 0, :], model.kinetic_correction_ode
+            )
 
             async_worker.submit(_plot_y, traj_pred, f"logs/est_ys_{i}.pdf")
-            async_worker.submit(_plot_k, combined_pred, f"logs/est_k_{i}.pdf")
+            async_worker.submit(
+                _plot_k, jnp.exp(var_params["k_a_log"]), f"logs/est_k_{i}.pdf"
+            )
 
             loss_logger.flush()
             loss_logger.plot()
@@ -231,17 +239,17 @@ if cfg["infer"]:
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
     state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
 
-    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, state["var_params"]))
-    _plot_k(combined_pred, "est_k.pdf")
+    k_a_pred = jnp.exp(state["var_params"]["k_a_log"])
+    _plot_k(k_a_pred, "est_k.pdf")
     np.savez(
         cfg["save_dir"] / "est_k.npz",
-        truth=combined_true,
-        pred=combined_pred,
-        init=combined_init,
+        truth=k_a_true,
+        pred=k_a_pred,
+        init=k_a_init,
     )
 
-    params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
-    traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_ode)
+    params = {**var_params, **fix_params}
+    traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_correction_ode)
     _plot_y(traj_pred, "est_ys.pdf")
 
 if cfg["save_dir"]:
