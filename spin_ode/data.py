@@ -112,7 +112,3 @@ def load_toy_dataset(target_spc_names):
     dataset = dataset[:, reorder]
 
     return jnp.transpose(jnp.asarray(dataset), (0, 2, 1))  # [B, time, spc]
-
-
-def add_normal_noise(a: jax.Array, factor, key):
-    return a * (1.0 + jax.random.normal(key, a.shape) * factor)
