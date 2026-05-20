@@ -77,7 +77,7 @@ if cfg["obs_sample"]:
     b_ys = b_ys[:, sample_idx, :]
     print("Using sample index: ", sample_idx)
 if cfg["obs_noise"]:
-    b_ys = b_ys * (1.0 + jax.random.normal(key, b_ys.shape) * float(cfg["obs_noise"]))
+    b_ys = b_ys * jnp.exp(jax.random.normal(key, b_ys.shape) * jnp.log(cfg["obs_noise"]))
 if cfg["obs_scale"]:
     b_ys = b_ys * (1.0 + cfg["obs_scale"])
 
@@ -107,7 +107,7 @@ if cfg["k_noise"]:
     var_params["k_a_log"] = (
         var_params["k_a_log"]
         + jax.random.normal(key, var_params["k_a_log"].shape)
-        * float(cfg["k_noise"])
+        * jnp.log(cfg["k_noise"])
     )
 
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
