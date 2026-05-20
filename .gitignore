@@ -3,9 +3,7 @@ venv*/
 .vscode/
 *output*/
 *logs*/
-plots/*.png
-plots/*.svg
-plots/*.pdf
+plots*/
 experiment*/
 cache*/
 
