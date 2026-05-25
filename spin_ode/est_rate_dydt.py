@@ -62,6 +62,11 @@ b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
     params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
 )
 
+if cfg["obs_noise"]:
+    b_ys = b_ys * (
+        jnp.array(1 + cfg["obs_noise"], dtype=FTYPE)
+        ** jax.random.normal(key, b_ys.shape)
+    )
 if cfg["obs_num"]:
     b_ys = b_ys[0 : cfg["obs_num"], :, :]
 if cfg["obs_sample"]:
@@ -69,8 +74,6 @@ if cfg["obs_sample"]:
     ts = ts[sample_idx]
     b_ys = b_ys[:, sample_idx, :]
     print("Using sample index: ", sample_idx)
-if cfg["obs_noise"]:
-    b_ys = b_ys * jnp.exp(jax.random.normal(key, b_ys.shape) * jnp.log(cfg["obs_noise"]))
 
 
 scale = {

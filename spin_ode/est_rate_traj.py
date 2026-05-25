@@ -69,6 +69,11 @@ elif cfg["scheme"] == "pollu":
 else:
     assert False, "Unknown scheme"
 
+if cfg["obs_noise"]:
+    b_ys = b_ys * (
+        jnp.array(1 + cfg["obs_noise"], dtype=FTYPE)
+        ** jax.random.normal(key, b_ys.shape)
+    )
 if cfg["obs_num"]:
     b_ys = b_ys[0 : cfg["obs_num"], :, :]
 if cfg["obs_sample"]:
@@ -76,8 +81,6 @@ if cfg["obs_sample"]:
     ts = ts[sample_idx]
     b_ys = b_ys[:, sample_idx, :]
     print("Using sample index: ", sample_idx)
-if cfg["obs_noise"]:
-    b_ys = b_ys * jnp.exp(jax.random.normal(key, b_ys.shape) * jnp.log(cfg["obs_noise"]))
 if cfg["obs_scale"]:
     b_ys = b_ys * (1.0 + cfg["obs_scale"])
 
@@ -104,10 +107,8 @@ fix_params = params
 
 
 if cfg["k_noise"]:
-    var_params["k_a_log"] = (
-        var_params["k_a_log"]
-        + jax.random.normal(key, var_params["k_a_log"].shape)
-        * jnp.log(cfg["k_noise"])
+    var_params["k_a_log"] = var_params["k_a_log"] + (
+        jax.random.normal(key, var_params["k_a_log"].shape) * jnp.log(1 + cfg["k_noise"])
     )
 
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)

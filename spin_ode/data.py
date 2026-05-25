@@ -112,3 +112,19 @@ def load_toy_dataset(target_spc_names):
     dataset = dataset[:, reorder]
 
     return jnp.transpose(jnp.asarray(dataset), (0, 2, 1))  # [B, time, spc]
+
+def create_noise():
+    from scipy.io import savemat, loadmat
+    jax.config.update("jax_enable_x64", True)
+    
+    conc_noise = jax.random.normal(jax.random.PRNGKey(0), (10, 51, 45))
+    k_noise = jax.random.normal(jax.random.PRNGKey(0), (50))
+
+    conc_n100_multiplier = 2.0 ** conc_noise
+    savemat("dataset1-10/noise_multiplier_fp64.mat", {
+        "conc_noise": conc_noise,
+        "k_noise": k_noise,
+        "conc_multiplier_n1": 1.01 ** conc_noise,
+        "conc_multiplier_n100": 2.0 ** conc_noise,
+        "k_multiplier_n10": 1.1 ** k_noise,
+    })
