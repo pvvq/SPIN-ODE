@@ -44,7 +44,7 @@ def collate(items: list[Any]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-class JAXDataLoader:
+class TreeDataLoader:
     """
     Parameters
     ----------
@@ -96,6 +96,22 @@ class JAXDataLoader:
             yield from self
 
 
+def arrays_loader(arrays: tuple, batch_size: int, *, key):
+    dataset_size = arrays[0].shape[0]
+    assert all(array.shape[0] == dataset_size for array in arrays)
+    indices = jnp.arange(dataset_size)
+    while True:
+        perm = jax.random.permutation(key, indices)
+        (key,) = jax.random.split(key, 1)
+        start = 0
+        end = batch_size
+        while end <= dataset_size:
+            batch_perm = perm[start:end]
+            yield tuple(array[batch_perm] for array in arrays)
+            start = end
+            end = start + batch_size
+
+
 # ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------
@@ -116,8 +132,13 @@ if __name__ == "__main__":
         def __getitem__(self, i):
             return {"x": self._x[i], "label": self._y[i]}
 
-    loader = JAXDataLoader(ToyDataset(20), batch_size=6, shuffle=True, drop_last=True)
+    loader = TreeDataLoader(ToyDataset(20), batch_size=6, shuffle=True, drop_last=True)
 
     print(f"batches/epoch: {len(loader)}")
     for batch in loader:
         print(f"  x={batch['x'].shape}  label={batch['label'].shape}")
+
+    arr = jnp.arange(12).reshape((1,3,4))
+    arr_loader = arrays_loader((arr,), 1, key=jax.random.PRNGKey(0))
+    for step, (arr,) in zip(range(5), arr_loader):
+        print(step, arr, arr.shape)
