@@ -23,6 +23,7 @@ import model
 import data
 import manager as mngr
 from metrics import mse, log_mse
+from jax_data_utils import arrays_loader
 import plot
 
 cfg = mngr.load_config()
@@ -56,46 +57,39 @@ params = {
 }
 
 if cfg["scheme"] == "toy":
-    b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
+    all_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
     # re-compute trajectory to avoid numerical error between solvers
-    b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-        params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
+    all_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+        params, ts, all_ys_csv[:, 0, :], model.kinetic_ode
     )
 elif cfg["scheme"] == "pollu":
-    b_y0 = jnp.expand_dims(y0, 0)
-    b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+    all_y0 = jnp.expand_dims(y0, 0)
+    all_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
         params, ts, b_y0, model.kinetic_ode
     )
 else:
     assert False, "Unknown scheme"
 
+obs_ys = all_ys
+ys0 = all_ys[0]
+
 if cfg["obs_noise"]:
-    b_ys = b_ys * (
+    assert cfg["obs_noise_rep"], "Need repetition of noise"
+    obs_ys = obs_ys * (
         jnp.array(1 + cfg["obs_noise"], dtype=FTYPE)
-        ** jax.random.normal(key, b_ys.shape)
+        ** jax.random.normal(key, (cfg["obs_noise_rep"],) + obs_ys.shape)
     )
+    np.savez(cfg["save_dir"]/"obs_ys", obs_ys=obs_ys)
 if cfg["obs_num"]:
-    b_ys = b_ys[0 : cfg["obs_num"], :, :]
+    obs_ys = obs_ys[:, 0 : cfg["obs_num"], :, :]
 if cfg["obs_sample"]:
     sample_idx = jnp.linspace(0, ts.shape[0] - 1, num=cfg["obs_sample"], dtype=int)
     ts = ts[sample_idx]
-    b_ys = b_ys[:, sample_idx, :]
+    obs_ys = obs_ys[:, :, sample_idx, :]
+    ys0 = ys0[sample_idx, :]
     print("Using sample index: ", sample_idx)
-if cfg["obs_scale"]:
-    b_ys = b_ys * (1.0 + cfg["obs_scale"])
 
-scale = {
-    "yMax": jnp.max(b_ys, axis=(0, 1)),
-    "yMin": jnp.min(b_ys, axis=(0, 1)),
-    "tScale": jnp.array(ts[-1] - ts[0], dtype=FTYPE),
-}
-scale["yScale"] = jnp.where(
-    scale["yMax"] - scale["yMin"] == 0.0, scale["yMax"], scale["yMax"] - scale["yMin"]
-)
-scale["ytScale"] = scale["yScale"] / scale["tScale"]
-
-params["scale"] = scale
-
+arrs_loader = arrays_loader((obs_ys,), batch_size=1, key=key)
 
 # Model ========================================================================
 
@@ -127,7 +121,7 @@ def _plot_k(k_a_pred, fname):
 
 
 def _plot_y(traj_pred, fname):
-    fig = plot.plot_series(y=traj_pred, t=ts, yy=b_ys[0], tt=ts)
+    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys0, tt=ts)
     fig.savefig(cfg["save_dir"] / fname)
     plot.plt.close(fig)
 
@@ -168,7 +162,7 @@ optimizer = optax.chain(
 )
 opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
-start_epoch = 0
+start_step = 0
 if cfg["resume"]:
     if cfg["resume_ckpt"]:
         restore_path = Path(cfg["resume_ckpt"]).absolute()
@@ -176,24 +170,25 @@ if cfg["resume"]:
         assert cfg["save_dir"], "must provide save_dir or resume_ckpt to resume"
         restore_path = cfg["save_dir"] / "checkpoints"
     restore_mngr = mngr.get_checkpoint_manager(restore_path)
-    start_epoch = restore_mngr.latest_step()
-    print(f"Resume from checkpoint {restore_path}/{start_epoch}")
+    start_step = restore_mngr.latest_step()
+    print(f"Resume from checkpoint {restore_path}/{start_step}")
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
-    restored = mngr.standard_restore(restore_mngr, start_epoch, abstract_state)
+    restored = mngr.standard_restore(restore_mngr, start_step, abstract_state)
     var_params = restored["var_params"]
     opt_state = restored["opt_state"]
 
 length_strategy = [1.0]
-epochs_strategy = [cfg["epochs"]]
+steps_strategy = [cfg["steps"]]
 
 if not cfg["train"]:
-    epochs_strategy = []
+    steps_strategy = []
 
-for length, epochs in zip(length_strategy, epochs_strategy):
-    print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
+for length, steps in zip(length_strategy, steps_strategy):
+    print(f"strategy: length {length:.2f}, step {steps:.2f}")
 
-    bar = tqdm.tqdm(range(start_epoch + 1, epochs + 1), desc="Epochs", ncols=120)
-    for i in bar:
+    bar = tqdm.tqdm(range(start_step + 1, steps + 1), desc="steps", ncols=120)
+    for i, (batch,) in zip(bar, arrs_loader):
+        b_ys = batch.squeeze(0)
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
@@ -216,7 +211,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
             params = {**var_params, **fix_params}
             traj_pred = model.solve(
-                params, ts, b_ys[0, 0, :], model.kinetic_correction_ode
+                params, ts, ys0[0, :], model.kinetic_correction_ode
             )
 
             async_worker.submit(_plot_y, traj_pred, f"logs/est_ys_{i}.pdf")
@@ -249,7 +244,7 @@ if cfg["infer"]:
     )
 
     params = {**var_params, **fix_params}
-    traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_correction_ode)
+    traj_pred = model.solve(params, ts, ys0[0, :], model.kinetic_correction_ode)
     _plot_y(traj_pred, "est_ys.pdf")
 
 if cfg["save_dir"]:
