@@ -79,7 +79,8 @@ if cfg["obs_noise"]:
         jnp.array(1 + cfg["obs_noise"], dtype=FTYPE)
         ** jax.random.normal(key, (cfg["obs_noise_rep"],) + obs_ys.shape)
     )
-    np.savez(cfg["save_dir"]/"obs_ys", obs_ys=obs_ys)
+else:
+    obs_ys = jnp.expand_dims(obs_ys, 0)  # (noise, num, time, spc)
 if cfg["obs_num"]:
     obs_ys = obs_ys[:, 0 : cfg["obs_num"], :, :]
 if cfg["obs_sample"]:
