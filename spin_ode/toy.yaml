@@ -6,7 +6,7 @@ default: &default
   obs_num: 1
   obs_sample: 4
   obs_noise: null
-  obs_noise_rep: 10
+  obs_noise_rep: 1
 
   # model
   solver:
@@ -49,6 +49,7 @@ est_rate_traj:
   k_noise: 1.e-1
 
   steps: 2000
+  batch_size: 1
   learning_rate: 1.e-3
   test_interval: 50
   ckpt_interval: 10

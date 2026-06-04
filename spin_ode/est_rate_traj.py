@@ -90,7 +90,7 @@ if cfg["obs_sample"]:
     ys0 = ys0[sample_idx, :]
     print("Using sample index: ", sample_idx)
 
-arrs_loader = arrays_loader((obs_ys,), batch_size=1, key=key)
+arrs_loader = arrays_loader((obs_ys,), batch_size=cfg["batch_size"], key=key)
 
 # Model ========================================================================
 
@@ -188,8 +188,9 @@ for length, steps in zip(length_strategy, steps_strategy):
     print(f"strategy: length {length:.2f}, step {steps:.2f}")
 
     bar = tqdm.tqdm(range(start_step + 1, steps + 1), desc="steps", ncols=120)
-    for i, (batch,) in zip(bar, arrs_loader):
-        b_ys = batch.squeeze(0)
+    for i, (nb_ys,) in zip(bar, arrs_loader):
+        (n, b, t, s) = nb_ys.shape
+        b_ys = nb_ys.reshape((n*b, t, s))
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
