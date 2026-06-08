@@ -140,10 +140,7 @@ optimizer = optax.chain(
 opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
 length_strategy = [1.0]
-epochs_strategy = [cfg["epochs"]]
-
-if not cfg["train"]:
-    epochs_strategy = []
+steps_strategy = [cfg["steps"]] if cfg["train"] else []
 
 if cfg["resume"]:
     if cfg["resume_ckpt"]:
@@ -198,8 +195,7 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             grad_norm_logger.plot()
 
 
-if cfg["infer"]:
-    assert cfg["save_dir"], "must provide save_dir to load checkpoint"
+if cfg["infer"] and cfg["save_dir"]:
     # load checkpoint
     restore_step = ckpt_mngr.best_step()
     print(

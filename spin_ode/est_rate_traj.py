@@ -22,7 +22,7 @@ FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 import model
 import data
 import manager as mngr
-from metrics import mse, log_mse
+import metrics
 from jax_data_utils import arrays_loader
 import plot
 
@@ -100,7 +100,6 @@ ground_truth = {
 var_params = ground_truth.copy()
 fix_params = params
 
-
 if cfg["k_noise"]:
     var_params["k_a_log"] = var_params["k_a_log"] + (
         jax.random.normal(key, var_params["k_a_log"].shape) * jnp.log(1 + cfg["k_noise"])
@@ -132,7 +131,7 @@ def loss_fn(var_params, fix_params, ts, b_ys):
     b_ys_pred = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
         params, ts, b_ys[:, 0], model.kinetic_correction_ode
     )
-    loss = log_mse(b_ys_pred, b_ys)
+    loss = metrics.log_mse(b_ys_pred, b_ys)
     return loss
 
 
@@ -179,10 +178,7 @@ if cfg["resume"]:
     opt_state = restored["opt_state"]
 
 length_strategy = [1.0]
-steps_strategy = [cfg["steps"]]
-
-if not cfg["train"]:
-    steps_strategy = []
+steps_strategy = [cfg["steps"]] if cfg["train"] else []
 
 for length, steps in zip(length_strategy, steps_strategy):
     print(f"strategy: length {length:.2f}, step {steps:.2f}")
@@ -194,7 +190,7 @@ for length, steps in zip(length_strategy, steps_strategy):
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
-        k_err = mse(var_params["k_a_log"], ground_truth["k_a_log"])
+        k_err = metrics.mse(var_params["k_a_log"], ground_truth["k_a_log"])
         bar.set_postfix(
             {
                 "loss": f"{float(loss):.4e}",
@@ -229,8 +225,7 @@ for length, steps in zip(length_strategy, steps_strategy):
             k_err_logger.plot()
 
 
-if cfg["infer"]:
-    assert cfg["save_dir"], "must provide save_dir to load checkpoint"
+if cfg["infer"] and cfg["save_dir"]:
     restore_step = ckpt_mngr.best_step()
     print(f"Inference using checkpoint {cfg['save_dir']}/checkpoints/{restore_step}")
     abstract_state = {"var_params": var_params, "opt_state": opt_state}

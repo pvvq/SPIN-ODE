@@ -28,19 +28,30 @@ traj_fit:
 
 est_rate_dydt: &est_rate_dydt
   <<: *default
-  epochs: 5000
-  learning_rate: 1.e-2
-  test_interval: 200
-  ckpt_interval: 10
+  obs_num: 1
+  obs_sample: 50
+
+  k_noise: 1.e-1
 
 est_rate_neural_ode:
   <<: *est_rate_dydt
   dydt: "neural_ode"
   neural_ode_ckpt: experiments/traj_fit/test/checkpoints
 
+  epochs: 5000
+  learning_rate: 1.e-2
+  test_interval: 200
+  ckpt_interval: 10
+
 est_rate_finite_diff:
   <<: *est_rate_dydt
   dydt: "finite_diff"
+
+  steps: 2000
+  batch_size: 1
+  learning_rate: 1.e-3
+  test_interval: 500
+  ckpt_interval: 500
 
 est_rate_traj:
   <<: *default

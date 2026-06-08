@@ -5,7 +5,7 @@ Usage: python est_rate_dydt.py -h
 """
 
 from pathlib import Path
-import pprint
+from pprint import pprint
 
 import jax
 import jax.numpy as jnp
@@ -22,19 +22,18 @@ FTYPE = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
 import model
 import data
 import manager as mngr
-from metrics import scale_mse
+import metrics
+from jax_data_utils import arrays_loader
 import plot
 
 cfg = mngr.load_config()
-pprint.pp(cfg)
+pprint(cfg)
 
 key = jax.random.PRNGKey(cfg["seed"])
 
 if cfg["save_dir"]:
     ckpt_mngr = mngr.get_checkpoint_manager(
-        cfg["save_dir"] / "checkpoints",
-        cfg["ckpt_interval"],
-        cfg["ckpt_keep"],
+        cfg["save_dir"] / "checkpoints", cfg["ckpt_interval"], cfg["ckpt_keep"]
     )
     async_worker = mngr.get_async_worker(6)
     (cfg["save_dir"] / "logs").mkdir(parents=True, exist_ok=True)
@@ -48,37 +47,53 @@ if cfg["save_dir"]:
 
 # Data =========================================================================
 
-sch, kinetics, ts, y0 = data.get_scheme("toy")
+sch, kinetics, ts, y0 = data.get_scheme(cfg["scheme"])
 nspec = len(sch["SPC_NAMES"])
+nrect = len(sch["EQN_NAMES"])
 
 params = {
     **kinetics,
     "solver": cfg["solver"],
 }
 
-b_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
-# re-compute trajectory to avoid numerical error between solvers
-b_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-    params, ts, b_ys_csv[:, 0, :], model.kinetic_ode
-)
+if cfg["scheme"] == "toy":
+    all_ys_csv = data.load_toy_dataset(target_spc_names=sch["SPC_NAMES"])
+    # re-compute trajectory to avoid numerical error between solvers
+    all_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+        params, ts, all_ys_csv[:, 0, :], model.kinetic_ode
+    )
+elif cfg["scheme"] == "pollu":
+    all_y0 = jnp.expand_dims(y0, 0)
+    all_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
+        params, ts, b_y0, model.kinetic_ode
+    )
+else:
+    assert False, "Unknown scheme"
+
+obs_ys = all_ys
+ys0 = all_ys[0]
 
 if cfg["obs_noise"]:
-    b_ys = b_ys * (
+    assert cfg["obs_noise_rep"], "Need repetition of noise"
+    obs_ys = obs_ys * (
         jnp.array(1 + cfg["obs_noise"], dtype=FTYPE)
-        ** jax.random.normal(key, b_ys.shape)
+        ** jax.random.normal(key, (cfg["obs_noise_rep"],) + obs_ys.shape)
     )
+else:
+    obs_ys = jnp.expand_dims(obs_ys, 0)  # (noise, num, time, spc)
 if cfg["obs_num"]:
-    b_ys = b_ys[0 : cfg["obs_num"], :, :]
+    obs_ys = obs_ys[:, 0 : cfg["obs_num"], :, :]
 if cfg["obs_sample"]:
     sample_idx = jnp.linspace(0, ts.shape[0] - 1, num=cfg["obs_sample"], dtype=int)
     ts = ts[sample_idx]
-    b_ys = b_ys[:, sample_idx, :]
+    obs_ys = obs_ys[:, :, sample_idx, :]
+    ys0 = ys0[sample_idx, :]
     print("Using sample index: ", sample_idx)
 
 
 scale = {
-    "yMax": jnp.max(b_ys, axis=(0, 1)),
-    "yMin": jnp.min(b_ys, axis=(0, 1)),
+    "yMax": jnp.max(obs_ys, axis=(0, 1, 2)),
+    "yMin": jnp.min(obs_ys, axis=(0, 1, 2)),
     "tScale": jnp.array(ts[-1] - ts[0], dtype=FTYPE),
 }
 scale["yScale"] = jnp.where(
@@ -89,6 +104,7 @@ scale["ytScale"] = scale["yScale"] / scale["tScale"]
 params["scale"] = scale
 
 # prepare dydt data
+(n, b, t, s) = obs_ys.shape
 if cfg["dydt"] == "neural_ode":
     neural_network = model.ScaleMLP(
         data_size=nspec,
@@ -107,49 +123,64 @@ if cfg["dydt"] == "neural_ode":
         restore_mngr, restore_step, {"var_params": {"nn": arr_nn}}
     )
     params["nn"] = eqx.combine(restored["var_params"]["nn"], static_nn)
-    b_dydt = eqx.filter_vmap(
-        eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None)),
-        in_axes=(None, 0, None),
-    )(None, b_ys, params)
+    obs_dydt = eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None))(
+        None, obs_ys.reshape(n*b*t, s), params
+    )
+    obs_dydt = obs_dydt.reshape(n, b, t, s)
 elif cfg["dydt"] == "finite_diff":
-    b_dydt = jnp.gradient(b_ys, ts, axis=1)
+    obs_dydt = jnp.gradient(obs_ys, ts, axis=-2)
 else:
     assert False, f"{cfg['dydt']} not defined"
 
+arrs_loader = arrays_loader((obs_ys, obs_dydt), batch_size=cfg["batch_size"], key=key)
+
 # Model ========================================================================
 
-var_names = ["k_static", "ro2_coef"]
-ground_truth = {k: v for k, v in params.items() if k in var_names}
-fix_params = {k: v for k, v in params.items() if k not in var_names}
-var_params = jax.tree.map(jnp.zeros_like, ground_truth)  # NOTE: log scale
-print(var_params)
+ground_truth = {
+    "k_a_log": jnp.zeros(nrect, dtype=FTYPE),  # NOTE: log scale correction coefficients
+}
+var_params = ground_truth.copy()
+fix_params = params
 
-combined_true = data.combine_static_ro2(ground_truth)
-combined_init = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
+if cfg["k_noise"]:
+    var_params["k_a_log"] = var_params["k_a_log"] + (
+        jax.random.normal(key, var_params["k_a_log"].shape) * jnp.log(1 + cfg["k_noise"])
+    )
+
+fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
+
+k_a_init = jnp.exp(var_params["k_a_log"])
+k_a_true = jnp.exp(ground_truth["k_a_log"])
 
 
-def _plot_k(combined_pred, fname):
+def _plot_k(k_a_pred, fname):
     fig = plot.plot_k(
-        [combined_pred, combined_init, combined_true],
+        [k_a_pred, k_a_init, k_a_true],
         ["Estimated", "Initial", "Ground truth"],
     )
     fig.savefig(cfg["save_dir"] / fname)
     plot.plt.close(fig)
 
 
-def loss_fn(var_params, fix_params, dydt, ys):
-    var_params = jax.tree.map(jnp.exp, var_params)
+def _plot_y(traj_pred, fname):
+    fig = plot.plot_series(y=traj_pred, t=ts, yy=ys0, tt=ts)
+    fig.savefig(cfg["save_dir"] / fname)
+    plot.plt.close(fig)
+
+
+def loss_fn(var_params, fix_params, b_dydt, b_ys):
     params = {**var_params, **fix_params}
 
     def _pred_dydt(params, y):
-        kinetic_dydt = model.kinetic_ode(None, y, params)
+        kinetic_dydt = model.kinetic_correction_ode(None, y, params)
         return kinetic_dydt
 
     dydt_pred = eqx.filter_vmap(
         eqx.filter_vmap(_pred_dydt, in_axes=(None, 0)),
         in_axes=(None, 0),
-    )(params, ys)
-    loss = scale_mse(dydt, dydt_pred, params["scale"]["ytScale"])
+    )(params, b_ys)
+    loss = metrics.scale_mse(b_dydt, dydt_pred, jnp.max(b_dydt, axis=(0, 1))-jnp.min(b_dydt, axis=(0, 1)))
+    # loss = metrics.signed_softlog_mse(b_dydt, dydt_pred)
     return loss
 
 
@@ -177,7 +208,7 @@ optimizer = optax.chain(
 )
 opt_state = optimizer.init(eqx.filter(var_params, eqx.is_inexact_array))
 
-start_epoch = 0
+start_step = 0
 if cfg["resume"]:
     if cfg["resume_ckpt"]:
         restore_path = Path(cfg["resume_ckpt"]).absolute()
@@ -185,29 +216,28 @@ if cfg["resume"]:
         assert cfg["save_dir"], "must provide save_dir or resume_ckpt to resume"
         restore_path = cfg["save_dir"] / "checkpoints"
     restore_mngr = mngr.get_checkpoint_manager(restore_path)
-    start_epoch = restore_mngr.latest_step()
-    print(f"Resume from checkpoint {restore_path}/{start_epoch}")
+    start_step = restore_mngr.latest_step()
+    print(f"Resume from checkpoint {restore_path}/{start_step}")
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
-    restored = mngr.standard_restore(restore_mngr, start_epoch, abstract_state)
+    restored = mngr.standard_restore(restore_mngr, start_step, abstract_state)
     var_params = restored["var_params"]
     opt_state = restored["opt_state"]
 
 length_strategy = [1.0]
-epochs_strategy = [cfg["epochs"]]
+steps_strategy = [cfg["steps"]] if cfg["train"] else []
 
-if not cfg["train"]:
-    epochs_strategy = []
+for length, steps in zip(length_strategy, steps_strategy):
+    print(f"strategy: length {length:.2f}, step {steps:.2f}")
 
-for length, epochs in zip(length_strategy, epochs_strategy):
-    print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
-
-    bar = tqdm.tqdm(range(start_epoch + 1, epochs + 1), desc="Epochs", ncols=120)
-    for i in bar:
+    bar = tqdm.tqdm(range(start_step + 1, steps + 1), desc="steps", ncols=120)
+    for i, (nb_ys, nb_dydt) in zip(bar, arrs_loader):
+        (n, b, t, s) = nb_ys.shape
+        b_ys = nb_ys.reshape((n*b, t, s))
+        b_dydt = nb_dydt.reshape((n*b, t, s))
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
         )
-        combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, var_params))
-        k_err = scale_mse(combined_pred, combined_true, combined_true)
+        k_err = metrics.mse(var_params["k_a_log"], ground_truth["k_a_log"])
         bar.set_postfix(
             {
                 "loss": f"{float(loss):.4e}",
@@ -224,7 +254,9 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             k_err_logger.log(i, k_err)
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # Testing
-            async_worker.submit(_plot_k, combined_pred, f"logs/est_k_{i}.pdf")
+            async_worker.submit(
+                _plot_k, jnp.exp(var_params["k_a_log"]), f"logs/est_k_{i}.pdf"
+            )
 
             loss_logger.flush()
             loss_logger.plot()
@@ -234,27 +266,24 @@ for length, epochs in zip(length_strategy, epochs_strategy):
             k_err_logger.plot()
 
 
-if cfg["infer"]:
-    assert cfg["save_dir"], "must provide save_dir to load checkpoint"
+if cfg["infer"] and cfg["save_dir"]:
     restore_step = ckpt_mngr.best_step()
     print(f"Inference using checkpoint {cfg['save_dir']}/checkpoints/{restore_step}")
     abstract_state = {"var_params": var_params, "opt_state": opt_state}
     state = mngr.standard_restore(ckpt_mngr, restore_step, abstract_state)
 
-    combined_pred = data.combine_static_ro2(jax.tree.map(jnp.exp, state["var_params"]))
-    _plot_k(combined_pred, "est_k.pdf")
+    k_a_pred = jnp.exp(state["var_params"]["k_a_log"])
+    _plot_k(k_a_pred, "est_k.pdf")
     np.savez(
         cfg["save_dir"] / "est_k.npz",
-        truth=combined_true,
-        pred=combined_pred,
-        init=combined_init,
+        truth=k_a_true,
+        pred=k_a_pred,
+        init=k_a_init,
     )
 
-    params = {**jax.tree.map(jnp.exp, var_params), **fix_params}
-    traj_pred = model.solve(params, ts, b_ys[0, 0, :], model.kinetic_ode)
-    fig = plot.plot_series(y=traj_pred, t=ts, yy=b_ys[0], tt=ts)
-    fig.savefig(cfg["save_dir"] / "est_ys.pdf")
-    plot.plt.close(fig)
+    params = {**var_params, **fix_params}
+    traj_pred = model.solve(params, ts, ys0[0, :], model.kinetic_ode)
+    _plot_y(traj_pred, "est_ys.pdf")
 
 if cfg["save_dir"]:
     print("Finalising")
