@@ -65,7 +65,7 @@ if cfg["scheme"] == "toy":
 elif cfg["scheme"] == "pollu":
     all_y0 = jnp.expand_dims(y0, 0)
     all_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-        params, ts, b_y0, model.kinetic_ode
+        params, ts, all_y0, model.kinetic_ode
     )
 else:
     assert False, "Unknown scheme"
@@ -124,7 +124,7 @@ if cfg["dydt"] == "neural_ode":
     )
     params["nn"] = eqx.combine(restored["var_params"]["nn"], static_nn)
     obs_dydt = eqx.filter_vmap(model.neural_ode, in_axes=(None, 0, None))(
-        None, obs_ys.reshape(n*b*t, s), params
+        None, obs_ys.reshape(n * b * t, s), params
     )
     obs_dydt = obs_dydt.reshape(n, b, t, s)
 elif cfg["dydt"] == "finite_diff":
@@ -144,7 +144,8 @@ fix_params = params
 
 if cfg["k_noise"]:
     var_params["k_a_log"] = var_params["k_a_log"] + (
-        jax.random.normal(key, var_params["k_a_log"].shape) * jnp.log(1 + cfg["k_noise"])
+        jax.random.normal(key, var_params["k_a_log"].shape)
+        * jnp.log(1 + cfg["k_noise"])
     )
 
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
@@ -179,7 +180,9 @@ def loss_fn(var_params, fix_params, b_dydt, b_ys):
         eqx.filter_vmap(_pred_dydt, in_axes=(None, 0)),
         in_axes=(None, 0),
     )(params, b_ys)
-    loss = metrics.scale_mse(b_dydt, dydt_pred, jnp.max(b_dydt, axis=(0, 1))-jnp.min(b_dydt, axis=(0, 1)))
+    loss = metrics.scale_mse(
+        b_dydt, dydt_pred, jnp.max(b_dydt, axis=(0, 1)) - jnp.min(b_dydt, axis=(0, 1))
+    )
     # loss = metrics.signed_softlog_mse(b_dydt, dydt_pred)
     return loss
 
@@ -232,8 +235,8 @@ for length, steps in zip(length_strategy, steps_strategy):
     bar = tqdm.tqdm(range(start_step + 1, steps + 1), desc="steps", ncols=120)
     for i, (nb_ys, nb_dydt) in zip(bar, arrs_loader):
         (n, b, t, s) = nb_ys.shape
-        b_ys = nb_ys.reshape((n*b, t, s))
-        b_dydt = nb_dydt.reshape((n*b, t, s))
+        b_ys = nb_ys.reshape((n * b, t, s))
+        b_dydt = nb_dydt.reshape((n * b, t, s))
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, b_dydt, b_ys
         )

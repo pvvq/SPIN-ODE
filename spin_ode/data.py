@@ -92,7 +92,7 @@ def split_static_ro2(combined):
     return tree
 
 
-TOY_DATASET_DIR = "dataset1-10/"
+TOY_DATASET_DIR = "data_toy_arca/"
 
 
 def load_toy_dataset(target_spc_names):
@@ -113,18 +113,23 @@ def load_toy_dataset(target_spc_names):
 
     return jnp.transpose(jnp.asarray(dataset), (0, 2, 1))  # [B, time, spc]
 
+
 def create_noise():
-    from scipy.io import savemat, loadmat
+    from scipy.io import savemat
+
     jax.config.update("jax_enable_x64", True)
-    
+
     conc_noise = jax.random.normal(jax.random.PRNGKey(0), (10, 51, 45))
     k_noise = jax.random.normal(jax.random.PRNGKey(0), (50))
 
-    conc_n100_multiplier = 2.0 ** conc_noise
-    savemat("dataset1-10/noise_multiplier_fp64.mat", {
-        "conc_noise": conc_noise,
-        "k_noise": k_noise,
-        "conc_multiplier_n1": 1.01 ** conc_noise,
-        "conc_multiplier_n100": 2.0 ** conc_noise,
-        "k_multiplier_n10": 1.1 ** k_noise,
-    })
+    conc_n100_multiplier = 2.0**conc_noise
+    savemat(
+        f"{TOY_DATASET_DIR}/noise_multiplier_fp64.mat",
+        {
+            "conc_noise": conc_noise,
+            "k_noise": k_noise,
+            "conc_multiplier_n1": 1.01**conc_noise,
+            "conc_multiplier_n100": 2.0**conc_noise,
+            "k_multiplier_n10": 1.1**k_noise,
+        },
+    )

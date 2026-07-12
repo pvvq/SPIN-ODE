@@ -1,2 +1,25 @@
+[project]
+name = "SPIN-ODE"
+version = "1.1.0"
+description = "Collection of code for modelling, learning, and optimisation for chemical kinetic reactions."
+authors = [
+  {email = "wenqing.peng@helsinki.fi", name = "Wenqing Peng"}
+]
+urls = {repository = "https://github.com/pvvq/SPIN-ODE"}
+dependencies = [
+    "diffrax==0.5.0",
+    "equinox",
+    "jax",
+    "jaxtyping",
+    "matplotlib",
+    "numpy",
+    "optax",
+    "orbax-checkpoint==0.11.23",
+    "PyYAML",
+    "scipy",
+    "tqdm",
+]
+
+
 [tool.ruff.lint]
 ignore = ["E402", "F841"]

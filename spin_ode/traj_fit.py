@@ -161,7 +161,7 @@ else:
     start_epoch = 0
 
 
-for length, epochs in zip(length_strategy, epochs_strategy):
+for length, epochs in zip(length_strategy, steps_strategy):
     print(f"strategy: length {length:.2f}, epoch {epochs:.2f}")
 
     bar = tqdm.tqdm(range(start_epoch + 1, epochs + 1), desc="Epochs", ncols=120)

@@ -17,9 +17,7 @@ def parse_cmd_args():
     parser.add_argument(
         "--config", "-c", type=str, required=True, help="path to YAML config"
     )
-    parser.add_argument(
-        "--target", "-t", type=str, help="target in YAML config"
-    )
+    parser.add_argument("--target", "-t", type=str, help="target in YAML config")
     parser.add_argument(
         "--train",
         action=argparse.BooleanOptionalAction,

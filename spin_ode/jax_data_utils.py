@@ -138,7 +138,7 @@ if __name__ == "__main__":
     for batch in loader:
         print(f"  x={batch['x'].shape}  label={batch['label'].shape}")
 
-    arr = jnp.arange(12).reshape((1,3,4))
+    arr = jnp.arange(12).reshape((1, 3, 4))
     arr_loader = arrays_loader((arr,), 1, key=jax.random.PRNGKey(0))
     for step, (arr,) in zip(range(5), arr_loader):
         print(step, arr, arr.shape)

@@ -65,7 +65,7 @@ if cfg["scheme"] == "toy":
 elif cfg["scheme"] == "pollu":
     all_y0 = jnp.expand_dims(y0, 0)
     all_ys = eqx.filter_vmap(model.solve, in_axes=(None, None, 0, None))(
-        params, ts, b_y0, model.kinetic_ode
+        params, ts, all_y0, model.kinetic_ode
     )
 else:
     assert False, "Unknown scheme"
@@ -102,7 +102,8 @@ fix_params = params
 
 if cfg["k_noise"]:
     var_params["k_a_log"] = var_params["k_a_log"] + (
-        jax.random.normal(key, var_params["k_a_log"].shape) * jnp.log(1 + cfg["k_noise"])
+        jax.random.normal(key, var_params["k_a_log"].shape)
+        * jnp.log(1 + cfg["k_noise"])
     )
 
 fix_params["opt_mask"] = jax.tree.map(jnp.ones_like, var_params)
@@ -186,7 +187,7 @@ for length, steps in zip(length_strategy, steps_strategy):
     bar = tqdm.tqdm(range(start_step + 1, steps + 1), desc="steps", ncols=120)
     for i, (nb_ys,) in zip(bar, arrs_loader):
         (n, b, t, s) = nb_ys.shape
-        b_ys = nb_ys.reshape((n*b, t, s))
+        b_ys = nb_ys.reshape((n * b, t, s))
         var_params, loss, grad_norm, opt_state = opt_step(
             optimizer, opt_state, var_params, fix_params, ts, b_ys
         )
@@ -208,9 +209,7 @@ for length, steps in zip(length_strategy, steps_strategy):
 
         if cfg["save_dir"] and i % cfg["test_interval"] == 0:  # testing
             params = {**var_params, **fix_params}
-            traj_pred = model.solve(
-                params, ts, ys0[0, :], model.kinetic_correction_ode
-            )
+            traj_pred = model.solve(params, ts, ys0[0, :], model.kinetic_correction_ode)
 
             async_worker.submit(_plot_y, traj_pred, f"logs/est_ys_{i}.pdf")
             async_worker.submit(

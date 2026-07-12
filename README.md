@@ -1,45 +1,23 @@
-# SPIN-ODE: **S**tiff **P**hysics-**I**nformed **N**eural **ODE** for Chemical Reaction Rate Estimation
-Code for paper: [SPIN-ODE](https://doi.org/10.48550/arXiv.2505.05625)
+# collection of code for modelling, learning, and optimisation for chemical kinetic reactions.
 
-SPIN-ODE fits concentration trajectories (a) to infer reaction rate coefficients (b), converging from random initialization to
-the true data (light colour → dark colour).
-
-<p align="center">
-    <img src="plots/teaser.png" alt="teaser" width="75%">
-</p>
+## SPIN-ODE: **S**tiff **P**hysics-**I**nformed **N**eural **ODE** for Chemical Reaction Rate Estimation
+Code for paper [SPIN-ODE](https://doi.org/10.48550/arXiv.2505.05625)
+    - Version for the paper: [v1.0.0](https://github.com/pvvq/SPIN-ODE/releases/tag/v1.0.0)
+    - More details in [SPIN-ODE README](spin_ode/README.md)
 
 ## Environment
-Dependent Python packages are lised in `requirements.txt` and `requirements_ver.txt`.
+Clone with submodules (this pulls in [KPPax](https://github.com/pvvq/KPPax) at the pinned version):
+```sh
+git clone --recurse-submodules https://github.com/pvvq/SPIN-ODE.git
+```
+If you already cloned without `--recurse-submodules`:
+```sh
+git submodule update --init
+```
 
-## Data
-We use 3 dataset:
-- Robertson: The classic Robertson stiff ODE system.
-- POLLU: The air pollution stiff ODE system.
-- AOXID: Toy autoxidation chemistry system.
-
-Robertson and POLLU dataset are simulated by the Scipy BDF stiff ODE solver. AOXID are simulated by Kinetic PreProcessor (KPP), we also provides 10 AOXID trajectory data with different initial concentrations in [`results_t100_dt1_10/`](results_t100_dt1_10/). One example input file for KPP is [`toy_44.def`](toy_44.def). All data generation/loading has been integrated in the training script already.
-
-## Run
-There are two training scripts:
-- [`train_ode.py`](train_ode.py): neural ODE training, where the network is coupled with ODE solver to integrate and fit concentration trajectory.
-- [`train_coll.py`](train_coll.py): pre-training, where network is trained on estimated time derivative.
-
-All features/hyper-parameters are controlled by `yaml` config files. Examples are provided in [`config/`](config) folder. Each script is for one experiment setup, in which there are `yaml` target for different dataset and training steps.
-
-Additionally, a few command line parameters are used to choose script and target, as well as switch for logging. See `python train_ode.py --help` for details.
-
-**All the commands we use** are provided in the [`slurm.sh`](slurm.sh), itself is also useful to run SPIN-ODE on HPC with SLURM scheduling system.
-
-For example, the full 3-step approach described in our paper on the Robertson dataset:
-```shell
-# step 1: train MLP to fit nODE traj
-python train_ode.py --config configs/spin.yaml --target rober_fit
-
-# step 2: train CRNN with deriv from interpolated traj inferenced by MLP
-python train_coll.py --config configs/spin.yaml --target rober_coll
-
-# step 3: fine-tune on CRNN with estimated rate coefficient
-python train_ode.py --config configs/spin.yaml --target rober_tune
+Install the Python dependencies:
+```sh
+pip install -e .
 ```
 
 ## Acknowledgements
@@ -50,3 +28,12 @@ python train_ode.py --config configs/spin.yaml --target rober_tune
 
 # License
 This project is licenced under GNU GPLv3, see LICENSE for details.
+
+# Change log
+## v1.1.0
+- Major refactor, more JAX-ish.
+- Switch from Flax to Equinox as the nueral netowrk framework.
+- Use the KPPax as the kinetic reaction equation parse.
+
+## v1.0.0
+- Initial release for the SPIN-ODE paper.
