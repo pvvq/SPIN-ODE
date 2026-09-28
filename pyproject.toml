@@ -1,7 +1,7 @@
 [project]
 name = "SPIN-ODE"
-version = "1.1.0"
-description = "Collection of code for modelling, learning, and optimisation for chemical kinetic reactions."
+version = "1.1.1"
+description = "Differentiable modelling of chemical kinetic reactions."
 authors = [
   {email = "wenqing.peng@helsinki.fi", name = "Wenqing Peng"}
 ]

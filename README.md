@@ -1,9 +1,13 @@
-# collection of code for modelling, learning, and optimisation for chemical kinetic reactions.
+# Differentiable modelling of chemical kinetic reactions.
 
 ## SPIN-ODE: **S**tiff **P**hysics-**I**nformed **N**eural **ODE** for Chemical Reaction Rate Estimation
-Code for paper [SPIN-ODE](https://doi.org/10.48550/arXiv.2505.05625)
-    - Version for the paper: [v1.0.0](https://github.com/pvvq/SPIN-ODE/releases/tag/v1.0.0)
+Code for paper [SPIN-ODE](https://doi.org/10.3233%2FFAIA251040)
+    - Version used in the paper: [v1.0.0](https://github.com/pvvq/SPIN-ODE/releases/tag/v1.0.0)
     - More details in [SPIN-ODE README](spin_ode/README.md)
+
+Code for paper [Evaluation of optimisation and Bayesian inference methods for reaction rates in atmospheric chemical mechanisms](https://doi.org/10.48550/arXiv.2609.14569)
+    - Version used in this paper [v1.1.1](https://github.com/pvvq/SPIN-ODE/releases/tag/v1.1.1)
+    - Mass specturm version: [v1.1.1-mass](https://github.com/pvvq/SPIN-ODE/releases/tag/v1.1.1-mass)
 
 ## Environment
 Clone with submodules (this pulls in [KPPax](https://github.com/pvvq/KPPax) at the pinned version):
@@ -30,6 +34,9 @@ pip install -e .
 This project is licenced under GNU GPLv3, see LICENSE for details.
 
 # Change log
+## v1.1.1
+- update README
+
 ## v1.1.0
 - Major refactor, more JAX-ish.
 - Switch from Flax to Equinox as the nueral netowrk framework.
